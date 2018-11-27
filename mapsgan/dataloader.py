@@ -115,30 +115,32 @@ class Trajectories(Dataset):
                     curr_seq_rel[pad_front:pad_end, _idx, :] = dxy
                     curr_loss_mask[pad_front:pad_end, _idx] = 1 # ground truth for discriminator ?
                     peds_considered += 1
-                    
+                
+                # append to data if more than min_peds were observed
                 if peds_considered > self.min_peds:
                     self.peds_per_seq.append(peds_considered)
                     self.loss_masks.append(curr_loss_mask)
                     trajectories.append(curr_seq) # (num_seq, num_peds, xy, seq_len)
                     dtrajectories.append(curr_seq_rel)
-                    
+        
+        # List -> Array         
         trajectories = np.array(trajectories)
         dtrajectories = np.array(dtrajectories)
         self.loss_masks = np.array(self.loss_masks)
         
+        # Compute pairwise distances
         self.distances = np.zeros([len(trajectories), self.seq_len, 
                                    self.max_peds, self.max_peds])
-    
         for traj_idx, traj in enumerate(trajectories):
             for seq_idx, seq in enumerate(traj):
-                dist = squareform(pdist(seq, 'seuclidean'))
+                dist = squareform(pdist(seq), 'euclidean')
                 num_peds = self.peds_per_seq[traj_idx]
                 _filldist = (dist.max() + 1).round()
                 dist[num_peds::] = _filldist
                 dist[:, num_peds::] = _filldist
                 self.distances[traj_idx, seq_idx] = dist
         
-        # Convert numpy -> Torch Tensor
+        # Array -> Torch Tensor
         self.train_traj = torch.Tensor(trajectories[:, :self.train_len]).float()
         self.train_dtraj = torch.Tensor(dtrajectories[:, :self.train_len]).float()
         self.pred_traj = torch.Tensor(trajectories[:, :self.pred_len]).float()
@@ -147,7 +149,7 @@ class Trajectories(Dataset):
         self.distances = torch.Tensor(self.distances).float()
 
     def __len__(self):
-        return len(self.trajectories)
+        return len(self.train_traj)
     
     def __getitem__(self, idx):
         out = {'train': self.train_traj[idx],
