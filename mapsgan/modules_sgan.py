@@ -144,9 +144,7 @@ class Decoder(nn.Module):
         self.mlp_dim = mlp_dim
         self.pool_every_timestep = pool_every_timestep
 
-        self.decoder = nn.LSTM(
-            embedding_dim, h_dim, num_layers, dropout=dropout
-        )
+        self.decoder = nn.LSTM(embedding_dim, h_dim, num_layers, dropout=dropout)
 
         if pool_every_timestep:
             if pooling_type == 'pool_net':
