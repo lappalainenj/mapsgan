@@ -22,7 +22,7 @@ class PlotProps:
                      sharex=None, sharey=None,
                      xlabel='', ylabel='',
                      despine=True,
-                     offset=5, trim=False, 
+                     offset=5, trim=False,
                      ttl_fs=15, ttl_pos='center'):
 
         ax = plt.subplot2grid(tot_tup, sp_tup, colspan, rowspan, sharex=sharex, sharey=sharey)
@@ -41,3 +41,12 @@ class PlotProps:
 
     def legend(self, loc='best', fontsize=15):
         plt.legend(loc=loc, fontsize=fontsize, frameon=False)
+
+class Evaluation:
+    """This class contains evaluation metrics."""
+    NotImplemented
+
+class Visualization(Evaluation):
+    """Leverages evaluation metrics to create plots."""
+    NotImplemented
+    plot = PlotProps()

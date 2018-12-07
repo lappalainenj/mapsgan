@@ -87,7 +87,7 @@ def displacement_error(pred_traj, pred_traj_gt, consider_ped=None, mode='sum'):
 
 
 def final_displacement_error(pred_pos, pred_pos_gt, consider_ped=None, mode='sum'):
-    """
+    """Computes the displacement error between predicted and groundtruth destinations.
 
     Args:
         pred_pos: Tensor of shape (batch, 2). Predicted last positions.

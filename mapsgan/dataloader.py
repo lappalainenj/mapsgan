@@ -1,10 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Created on Tue Nov 27 18:00:01 2018
-
-@author: j.lappalainen
-"""
 import os
 import math
 
@@ -30,35 +23,35 @@ def read_file(_path, delim='\t'):
     return np.asarray(data)
 
 class Trajectories(Dataset):
-    """Initializes a pytorch dataset. Adaptation from 
+    """Initializes a pytorch dataset. Adaptation of
     https://github.com/agrimgupta92/sgan/blob/master/sgan/data/trajectories.py.
     
-        Args:
-            data_dir (str): Path towards folder with trajectory files.
-            delim (str): Delimiter for reading the trajectory files.
-            train_len (int): Length of training sequence.
-            pred_len (int): Length of groundtruth sequence.
-            min_peds (int): Minimal number of pedestrians.
-            max_peds (int): Maximal number of pedestrians.
-        
-        Attributes:
-            data_dir (str): Path towards folder with trajectory files.
-            all_files (list): List of all files inside data_dir.
-            train_len (int): Length of training sequence.
-            pred_len (int): Length of groundtruth sequence.
-            min_peds (int): Minimal number of pedestrians.
-            max_peds (int): Maximal number of pedestrians.
-            seq_len (int): Training sequence length + groundtruth length.
-            peds_per_seq (list): Number of agents per sequence.
-            train_traj (tensor): Training trajectories #(num_seq, train_len,
-                max_peds, 2).
-            train_dtraj (tensor): Like train_traj for dx, dy.
-            pred_traj (tensor): Like train_traj for the subsequent pred_len
-                frames.
-            pred_dtraj (tensor): Like pred_traj for dx, dy.
-            loss_masks (array): Masks for discriminator of zeros and ones.
-            distances (tensor): Pairwise distances of pedestrians. Per sequence
-                and timestep. 
+    Args:
+        data_dir (str): Path towards folder with trajectory files.
+        delim (str): Delimiter for reading the trajectory files.
+        train_len (int): Length of training sequence.
+        pred_len (int): Length of groundtruth sequence.
+        min_peds (int): Minimal number of pedestrians.
+        max_peds (int): Maximal number of pedestrians.
+
+    Attributes:
+        data_dir (str): Path towards folder with trajectory files.
+        all_files (list): List of all files inside data_dir.
+        train_len (int): Length of training sequence.
+        pred_len (int): Length of groundtruth sequence.
+        min_peds (int): Minimal number of pedestrians.
+        max_peds (int): Maximal number of pedestrians.
+        seq_len (int): Training sequence length + groundtruth length.
+        peds_per_seq (list): Number of agents per sequence.
+        train_traj (tensor): Training trajectories #(num_seq, train_len,
+            max_peds, 2).
+        train_dtraj (tensor): Like train_traj for dx, dy.
+        pred_traj (tensor): Like train_traj for the subsequent pred_len
+            frames.
+        pred_dtraj (tensor): Like pred_traj for dx, dy.
+        loss_masks (array): Masks for discriminator of zeros and ones.
+        distances (tensor): Pairwise distances of pedestrians. Per sequence
+            and timestep.
     """
             
     
