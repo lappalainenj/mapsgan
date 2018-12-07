@@ -94,12 +94,27 @@ parser.add_argument('--gpu_num', default="0", type=str)
 
 
 def init_weights(m):
+    """Initializes weights of a Linear nn.Module with Kaiming Normal.
+
+    Args:
+        m: nn.Module (only affects nn.Linear)
+    """
     classname = m.__class__.__name__
     if classname.find('Linear') != -1:
         nn.init.kaiming_normal_(m.weight)
 
 
 def get_dtypes(args):
+    """Returns either cuda-dtype or cpu-dtype of sort long and float.
+
+    Args:
+        args: Parsed arguments. Only args.use_gpu is required here.
+
+    Returns:
+        long_dtype
+        float_dtype
+
+    """
     long_dtype = torch.LongTensor
     float_dtype = torch.FloatTensor
     if args.use_gpu == 1:
@@ -109,6 +124,11 @@ def get_dtypes(args):
 
 
 def main(args):
+    """Handles Discriminator & Generator steps, loading & saving checkpoints, and logging.
+
+    Args:
+        args: Parsed arguments.
+    """
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_num
     train_path = get_dset_path(args.dataset_name, 'train')
     val_path = get_dset_path(args.dataset_name, 'val')
@@ -127,7 +147,7 @@ def main(args):
     logger.info(
         'There are {} iterations per epoch'.format(iterations_per_epoch)
     )
-
+    # IMPORTANT: Initialize Generator
     generator = TrajectoryGenerator(
         obs_len=args.obs_len,
         pred_len=args.pred_len,
@@ -152,6 +172,7 @@ def main(args):
     logger.info('Here is the generator:')
     logger.info(generator)
 
+    # IMPORTANT: Initialize Discriminator
     discriminator = TrajectoryDiscriminator(
         obs_len=args.obs_len,
         pred_len=args.pred_len,
@@ -172,9 +193,7 @@ def main(args):
     d_loss_fn = gan_d_loss
 
     optimizer_g = optim.Adam(generator.parameters(), lr=args.g_learning_rate)
-    optimizer_d = optim.Adam(
-        discriminator.parameters(), lr=args.d_learning_rate
-    )
+    optimizer_d = optim.Adam(discriminator.parameters(), lr=args.d_learning_rate)
 
     # Maybe restore from checkpoint
     restore_path = None
@@ -240,19 +259,15 @@ def main(args):
             # discriminator followed by args.g_steps steps on the generator.
             if d_steps_left > 0:
                 step_type = 'd'
-                losses_d = discriminator_step(args, batch, generator,
-                                              discriminator, d_loss_fn,
-                                              optimizer_d)
-                checkpoint['norm_d'].append(
-                    get_total_norm(discriminator.parameters()))
+                # IMPORTANT: Discriminator Step
+                losses_d = discriminator_step(args, batch, generator, discriminator, d_loss_fn, optimizer_d)
+                checkpoint['norm_d'].append(get_total_norm(discriminator.parameters()))
                 d_steps_left -= 1
             elif g_steps_left > 0:
                 step_type = 'g'
-                losses_g = generator_step(args, batch, generator,
-                                          discriminator, g_loss_fn,
-                                          optimizer_g)
-                checkpoint['norm_g'].append(
-                    get_total_norm(generator.parameters())
+                # IMPORTANT: Generator Step
+                losses_g = generator_step(args, batch, generator, discriminator, g_loss_fn, optimizer_g)
+                checkpoint['norm_g'].append(get_total_norm(generator.parameters())
                 )
                 g_steps_left -= 1
 
@@ -265,6 +280,7 @@ def main(args):
             if d_steps_left > 0 or g_steps_left > 0:
                 continue
 
+            # IMPORTANT: End of iteration t
             if args.timing == 1:
                 if t0 is not None:
                     logger.info('Interation {} took {}'.format(
@@ -359,18 +375,29 @@ def main(args):
                 break
 
 
-def discriminator_step(
-    args, batch, generator, discriminator, d_loss_fn, optimizer_d
-):
+def discriminator_step(args, batch, generator, discriminator, d_loss_fn, optimizer_d):
+    """Discriminator optimization step.
+
+    Args:
+        args: Parsed arguments.
+        batch: Batch from the trainloader.
+        generator: nn.Module, the Generator.
+        discriminator: nn.Module, the Discriminator.
+        d_loss_fn: Loss function for the Discriminator.
+        optimizer_d: Optimizer for the Discriminator.
+
+    Returns:
+        dict: Losses for the Discriminator.
+    """
     batch = [tensor.cuda() for tensor in batch]
-    (obs_traj, pred_traj_gt, obs_traj_rel, pred_traj_gt_rel, non_linear_ped,
-     loss_mask, seq_start_end) = batch
+    (obs_traj, pred_traj_gt, obs_traj_rel, pred_traj_gt_rel, non_linear_ped, loss_mask, seq_start_end) = batch
     losses = {}
     loss = torch.zeros(1).to(pred_traj_gt)
 
     generator_out = generator(obs_traj, obs_traj_rel, seq_start_end)
 
     pred_traj_fake_rel = generator_out
+    # IMPORTANT: The Generator generates displacements, which are added to the initial positions.
     pred_traj_fake = relative_to_abs(pred_traj_fake_rel, obs_traj[-1])
 
     traj_real = torch.cat([obs_traj, pred_traj_gt], dim=0)
@@ -378,6 +405,7 @@ def discriminator_step(
     traj_fake = torch.cat([obs_traj, pred_traj_fake], dim=0)
     traj_fake_rel = torch.cat([obs_traj_rel, pred_traj_fake_rel], dim=0)
 
+    # QUESTION: Are both, absolute trajectories and displacements discriminated?
     scores_fake = discriminator(traj_fake, traj_fake_rel, seq_start_end)
     scores_real = discriminator(traj_real, traj_real_rel, seq_start_end)
 
@@ -390,6 +418,7 @@ def discriminator_step(
     optimizer_d.zero_grad()
     loss.backward()
     if args.clipping_threshold_d > 0:
+        # QUESTION: Is this a Lipschitz constraining method as in W-GAN?
         nn.utils.clip_grad_norm_(discriminator.parameters(),
                                  args.clipping_threshold_d)
     optimizer_d.step()
@@ -397,12 +426,22 @@ def discriminator_step(
     return losses
 
 
-def generator_step(
-    args, batch, generator, discriminator, g_loss_fn, optimizer_g
-):
+def generator_step(args, batch, generator, discriminator, g_loss_fn, optimizer_g):
+    """Generator optimization step.
+
+    Args:
+        args: Parsed arguments.
+        batch: Batch from the trainloader.
+        generator: nn.Module, the Generator.
+        discriminator: nn.Module, the Discriminator.
+        g_loss_fn: Loss function for the Generator.
+        optimizer_g: Optimizer for the Generator.
+
+    Returns:
+        dict: Losses for the Generator.
+    """
     batch = [tensor.cuda() for tensor in batch]
-    (obs_traj, pred_traj_gt, obs_traj_rel, pred_traj_gt_rel, non_linear_ped,
-     loss_mask, seq_start_end) = batch
+    (obs_traj, pred_traj_gt, obs_traj_rel, pred_traj_gt_rel, non_linear_ped, loss_mask, seq_start_end) = batch
     losses = {}
     loss = torch.zeros(1).to(pred_traj_gt)
     g_l2_loss_rel = []
@@ -415,15 +454,14 @@ def generator_step(
         pred_traj_fake_rel = generator_out
         pred_traj_fake = relative_to_abs(pred_traj_fake_rel, obs_traj[-1])
 
-        if args.l2_loss_weight > 0:
-            g_l2_loss_rel.append(args.l2_loss_weight * l2_loss(
-                pred_traj_fake_rel,
-                pred_traj_gt_rel,
-                loss_mask,
-                mode='raw'))
+        if args.l2_loss_weight > 0: # IMPORTANT: Compute loss on displacements? Not intended. Default is zero.
+            g_l2_loss_rel.append(args.l2_loss_weight * l2_loss(pred_traj_fake_rel,
+                                                               pred_traj_gt_rel,
+                                                               loss_mask,
+                                                               mode='raw'))
 
     g_l2_loss_sum_rel = torch.zeros(1).to(pred_traj_gt)
-    if args.l2_loss_weight > 0:
+    if args.l2_loss_weight > 0: # IMPORTANT: Compute loss on displacements? Not intended. Default is zero.
         g_l2_loss_rel = torch.stack(g_l2_loss_rel, dim=1)
         for start, end in seq_start_end.data:
             _g_l2_loss_rel = g_l2_loss_rel[start:end]
@@ -447,17 +485,27 @@ def generator_step(
     optimizer_g.zero_grad()
     loss.backward()
     if args.clipping_threshold_g > 0:
-        nn.utils.clip_grad_norm_(
-            generator.parameters(), args.clipping_threshold_g
-        )
+        nn.utils.clip_grad_norm_(generator.parameters(), args.clipping_threshold_g)
     optimizer_g.step()
 
     return losses
 
 
-def check_accuracy(
-    args, loader, generator, discriminator, d_loss_fn, limit=False
-):
+def check_accuracy(args, loader, generator, discriminator, d_loss_fn, limit=False):
+    """Computes all possible metrics & losses for the generator and discriminator.
+
+    Args:
+        args: Parsed arguments.
+        loader: Dataloader object with testdata.
+        generator (nn.Module): The Generator.
+        discriminator (nn.Module): The Discriminator.
+        d_loss_fn: Loss function for the Discriminator.
+        limit (bool): Whether to stop after a few samples. Used in conjunction with args.num_samples_check.
+
+    Returns:
+        dict: All possible metrics & losses.
+
+    """
     d_losses = []
     metrics = {}
     g_l2_losses_abs, g_l2_losses_rel = ([],) * 2
@@ -466,30 +514,23 @@ def check_accuracy(
     total_traj, total_traj_l, total_traj_nl = 0, 0, 0
     loss_mask_sum = 0
     generator.eval()
+
     with torch.no_grad():
         for batch in loader:
+
             batch = [tensor.cuda() for tensor in batch]
-            (obs_traj, pred_traj_gt, obs_traj_rel, pred_traj_gt_rel,
-             non_linear_ped, loss_mask, seq_start_end) = batch
+            (obs_traj, pred_traj_gt, obs_traj_rel, pred_traj_gt_rel, non_linear_ped, loss_mask, seq_start_end) = batch
             linear_ped = 1 - non_linear_ped
             loss_mask = loss_mask[:, args.obs_len:]
 
-            pred_traj_fake_rel = generator(
-                obs_traj, obs_traj_rel, seq_start_end
-            )
+            pred_traj_fake_rel = generator(obs_traj, obs_traj_rel, seq_start_end)
             pred_traj_fake = relative_to_abs(pred_traj_fake_rel, obs_traj[-1])
 
-            g_l2_loss_abs, g_l2_loss_rel = cal_l2_losses(
-                pred_traj_gt, pred_traj_gt_rel, pred_traj_fake,
-                pred_traj_fake_rel, loss_mask
-            )
-            ade, ade_l, ade_nl = cal_ade(
-                pred_traj_gt, pred_traj_fake, linear_ped, non_linear_ped
-            )
+            g_l2_loss_abs, g_l2_loss_rel = cal_l2_losses(pred_traj_gt, pred_traj_gt_rel, pred_traj_fake,
+                                                         pred_traj_fake_rel, loss_mask)
+            ade, ade_l, ade_nl = cal_ade(pred_traj_gt, pred_traj_fake, linear_ped, non_linear_ped)
 
-            fde, fde_l, fde_nl = cal_fde(
-                pred_traj_gt, pred_traj_fake, linear_ped, non_linear_ped
-            )
+            fde, fde_l, fde_nl = cal_fde(pred_traj_gt, pred_traj_fake, linear_ped, non_linear_ped)
 
             traj_real = torch.cat([obs_traj, pred_traj_gt], dim=0)
             traj_real_rel = torch.cat([obs_traj_rel, pred_traj_gt_rel], dim=0)
@@ -542,36 +583,62 @@ def check_accuracy(
     return metrics
 
 
-def cal_l2_losses(
-    pred_traj_gt, pred_traj_gt_rel, pred_traj_fake, pred_traj_fake_rel,
-    loss_mask
-):
-    g_l2_loss_abs = l2_loss(
-        pred_traj_fake, pred_traj_gt, loss_mask, mode='sum'
-    )
-    g_l2_loss_rel = l2_loss(
-        pred_traj_fake_rel, pred_traj_gt_rel, loss_mask, mode='sum'
-    )
+def cal_l2_losses(pred_traj_gt, pred_traj_gt_rel, pred_traj_fake, pred_traj_fake_rel,loss_mask):
+    """L2Losses for trajectories and displacements.
+
+    Args:
+        pred_traj_gt: Tensor of shape (seq_len, batch, 2). Groud truth.
+        pred_traj_gt_rel: Tensor of shape (seq_len, batch, 2). Ground truth displacements.
+        pred_traj_fake: Tensor of shape (seq_len, batch, 2). Predicted trajectory.
+        pred_traj_fake_rel: Tensor of shape (seq_len, batch, 2). Predicted displacements.
+        loss_mask: Tensor of shape (batch, seq_len).
+
+    Returns:
+        Tensor of shape (,) giving L2Loss on absolute trajectories.
+        Tensor of shape (,) giving L2Loss on displacements.
+    """
+    g_l2_loss_abs = l2_loss(pred_traj_fake, pred_traj_gt, loss_mask, mode='sum')
+    g_l2_loss_rel = l2_loss(pred_traj_fake_rel, pred_traj_gt_rel, loss_mask, mode='sum')
     return g_l2_loss_abs, g_l2_loss_rel
 
 
 def cal_ade(pred_traj_gt, pred_traj_fake, linear_ped, non_linear_ped):
+    """Average displacement errors (ADE) for all agents, linear agents and non-linear agents.
+
+    Args:
+        pred_traj_gt: Tensor of shape (seq_len, batch, 2). Groud truth.
+        pred_traj_fake: Tensor of shape (seq_len, batch, 2). Predicted trajectory.
+        linear_ped: Tensor of shape (batch).
+        non_linear_ped: Tensor of shape (batch).
+
+    Returns:
+        Tensor of shape (,) giving ADE on all agents.
+        Tensor of shape (,) giving ADE on linear agents.
+        Tensor of shape (,) giving ADE on non-linear agents.
+    """
     ade = displacement_error(pred_traj_fake, pred_traj_gt)
     ade_l = displacement_error(pred_traj_fake, pred_traj_gt, linear_ped)
     ade_nl = displacement_error(pred_traj_fake, pred_traj_gt, non_linear_ped)
     return ade, ade_l, ade_nl
 
 
-def cal_fde(
-    pred_traj_gt, pred_traj_fake, linear_ped, non_linear_ped
-):
+def cal_fde(pred_traj_gt, pred_traj_fake, linear_ped, non_linear_ped):
+    """Final displacement errors (FDE) for all agents, linear agents and non-linear agents.
+
+    Args:
+        pred_traj_gt: Tensor of shape (seq_len, batch, 2). Groud truth.
+        pred_traj_fake: Tensor of shape (seq_len, batch, 2). Predicted trajectory.
+        linear_ped: Tensor of shape (batch).
+        non_linear_ped: Tensor of shape (batch).
+
+    Returns:
+        Tensor of shape (,) giving (FDE) on all agents.
+        Tensor of shape (,) giving (FDE) on linear agents.
+        Tensor of shape (,) giving (FDE) on non-linear agents.
+    """
     fde = final_displacement_error(pred_traj_fake[-1], pred_traj_gt[-1])
-    fde_l = final_displacement_error(
-        pred_traj_fake[-1], pred_traj_gt[-1], linear_ped
-    )
-    fde_nl = final_displacement_error(
-        pred_traj_fake[-1], pred_traj_gt[-1], non_linear_ped
-    )
+    fde_l = final_displacement_error(pred_traj_fake[-1], pred_traj_gt[-1], linear_ped)
+    fde_nl = final_displacement_error(pred_traj_fake[-1], pred_traj_gt[-1], non_linear_ped)
     return fde, fde_l, fde_nl
 
 

@@ -7,6 +7,22 @@ from contextlib import contextmanager
 import subprocess
 
 
+def relative_to_abs(rel_traj, start_pos):
+    """Given the initial positions, computes the absolute trajectory from displacements.
+
+    Args:
+        rel_traj: Tensor of shape (seq_len, batch, 2). Displacements.
+        start_pos: Tensor of shape (batch, 2). Initial positions.
+
+    Returns:
+        Tensor of shape (seq_len, batch, 2). Absolute trajectories.
+    """
+    rel_traj = rel_traj.permute(1, 0, 2)
+    displacement = torch.cumsum(rel_traj, dim=1)
+    start_pos = torch.unsqueeze(start_pos, dim=1)
+    abs_traj = displacement + start_pos
+    return abs_traj.permute(1, 0, 2)
+
 def int_tuple(s):
     return tuple(int(i) for i in s.split(','))
 
@@ -77,19 +93,3 @@ def get_dset_path(dset_name, dset_type):
     _dir = _dir.split("/")[:-1]
     _dir = "/".join(_dir)
     return os.path.join(_dir, 'datasets', dset_name, dset_type)
-
-
-def relative_to_abs(rel_traj, start_pos):
-    """
-    Inputs:
-    - rel_traj: pytorch tensor of shape (seq_len, batch, 2)
-    - start_pos: pytorch tensor of shape (batch, 2)
-    Outputs:
-    - abs_traj: pytorch tensor of shape (seq_len, batch, 2)
-    """
-    # batch, seq_len, 2
-    rel_traj = rel_traj.permute(1, 0, 2)
-    displacement = torch.cumsum(rel_traj, dim=1)
-    start_pos = torch.unsqueeze(start_pos, dim=1)
-    abs_traj = displacement + start_pos
-    return abs_traj.permute(1, 0, 2)

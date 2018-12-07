@@ -1,68 +1,56 @@
 import torch
 import random
 
-
-def bce_loss(input, target):
-    """
-    Numerically stable version of the binary cross-entropy loss function.
-    As per https://github.com/pytorch/pytorch/issues/751
-    See the TensorFlow docs for a derivation of this formula:
-    https://www.tensorflow.org/api_docs/python/tf/nn/sigmoid_cross_entropy_with_logits
-    Input:
-    - input: PyTorch Tensor of shape (N, ) giving scores.
-    - target: PyTorch Tensor of shape (N,) containing 0 and 1 giving targets.
-
-    Output:
-    - A PyTorch Tensor containing the mean BCE loss over the minibatch of
-      input data.
-    """
-    neg_abs = -input.abs()
-    loss = input.clamp(min=0) - input * target + (1 + neg_abs.exp()).log()
-    return loss.mean()
-
+bce_loss = torch.nn.BCEWithLogitsLoss()
 
 def gan_g_loss(scores_fake):
-    """
-    Input:
-    - scores_fake: Tensor of shape (N,) containing scores for fake samples
+    """Computes the BCE Loss for the generator, given the scores from the Discriminator.
 
-    Output:
-    - loss: Tensor of shape (,) giving GAN generator loss
+    Args:
+        scores_fake: Tensor of shape (N,) containing scores for fake samples
+
+    Returns:
+        Tensor of shape (,) giving GAN generator loss
+
+    Note: adds a random scalar to the scores as regularization.
     """
-    y_fake = torch.ones_like(scores_fake) * random.uniform(0.7, 1.2)
+    y_fake = torch.ones_like(scores_fake) * random.uniform(0.7, 1.2) # IMPORTANT: Ones because G needs to trick D
     return bce_loss(scores_fake, y_fake)
 
 
 def gan_d_loss(scores_real, scores_fake):
-    """
-    Input:
-    - scores_real: Tensor of shape (N,) giving scores for real samples
-    - scores_fake: Tensor of shape (N,) giving scores for fake samples
+    """Computes the BCE Loss for the discriminator, given its scores real and fake data.
 
-    Output:
-    - loss: Tensor of shape (,) giving GAN discriminator loss
+    Args:
+        scores_real: Tensor of shape (N,) giving scores for real samples.
+        scores_fake: Tensor of shape (N,) giving scores for fake samples.
+
+    Returns:
+        Tensor of shape (,) giving GAN discriminator loss.
+
+    Note: adds a random scalar to the scores as regularization.
     """
-    y_real = torch.ones_like(scores_real) * random.uniform(0.7, 1.2)
-    y_fake = torch.zeros_like(scores_fake) * random.uniform(0, 0.3)
+    y_real = torch.ones_like(scores_real) * random.uniform(0.7, 1.2) # IMPORTANT: Ones because D needs to learn truth
+    y_fake = torch.zeros_like(scores_fake) * random.uniform(0, 0.3) # IMPORTANT: Zeros because D needs to learn fake
     loss_real = bce_loss(scores_real, y_real)
     loss_fake = bce_loss(scores_fake, y_fake)
     return loss_real + loss_fake
 
 
-def l2_loss(pred_traj, pred_traj_gt, loss_mask, random=0, mode='average'):
-    """
-    Input:
-    - pred_traj: Tensor of shape (seq_len, batch, 2). Predicted trajectory.
-    - pred_traj_gt: Tensor of shape (seq_len, batch, 2). Groud truth
-    predictions.
-    - loss_mask: Tensor of shape (batch, seq_len)
-    - mode: Can be one of sum, average, raw
-    Output:
-    - loss: l2 loss depending on mode
+def l2_loss(pred_traj, pred_traj_gt, loss_mask, mode='average'):
+    """Computes the L2Loss between predicted and groundtruth trajectories.
+
+    Args:
+        pred_traj: Tensor of shape (seq_len, batch, 2). Predicted trajectory.
+        pred_traj_gt: Tensor of shape (seq_len, batch, 2). Groud truth.
+        loss_mask: Tensor of shape (batch, seq_len)
+        mode: Either sum, average, or raw.
+    Returns:
+        Tensor of shape (,) giving l2 loss.
     """
     seq_len, batch, _ = pred_traj.size()
-    loss = (loss_mask.unsqueeze(dim=2) *
-            (pred_traj_gt.permute(1, 0, 2) - pred_traj.permute(1, 0, 2))**2)
+    # QUESTION: Why exactly multiply with loss_mask? Zero out non-existing agents?
+    loss = (loss_mask.unsqueeze(dim=2) * (pred_traj_gt.permute(1, 0, 2) - pred_traj.permute(1, 0, 2))**2)
     if mode == 'sum':
         return torch.sum(loss)
     elif mode == 'average':
@@ -72,15 +60,18 @@ def l2_loss(pred_traj, pred_traj_gt, loss_mask, random=0, mode='average'):
 
 
 def displacement_error(pred_traj, pred_traj_gt, consider_ped=None, mode='sum'):
-    """
-    Input:
-    - pred_traj: Tensor of shape (seq_len, batch, 2). Predicted trajectory.
-    - pred_traj_gt: Tensor of shape (seq_len, batch, 2). Ground truth
-    predictions.
-    - consider_ped: Tensor of shape (batch)
-    - mode: Can be one of sum, raw
-    Output:
-    - loss: gives the eculidian displacement error
+    """Computes the displacement error between predicted and groundtruth trajectories.
+
+    Args:
+        pred_traj: Tensor of shape (seq_len, batch, 2). Predicted trajectory.
+        pred_traj_gt: Tensor of shape (seq_len, batch, 2). Ground truth.
+        consider_ped: Tensor of shape (batch).
+        mode: Either sum or raw.
+
+    Returns:
+        Tensor of shape (,) giving the eculidian displacement error.
+
+    # QUESTION: How is this different from sqrt(l2loss)?
     """
     seq_len, _, _ = pred_traj.size()
     loss = pred_traj_gt.permute(1, 0, 2) - pred_traj.permute(1, 0, 2)
@@ -95,17 +86,17 @@ def displacement_error(pred_traj, pred_traj_gt, consider_ped=None, mode='sum'):
         return loss
 
 
-def final_displacement_error(
-    pred_pos, pred_pos_gt, consider_ped=None, mode='sum'
-):
-    """
-    Input:
-    - pred_pos: Tensor of shape (batch, 2). Predicted last pos.
-    - pred_pos_gt: Tensor of shape (seq_len, batch, 2). Groud truth
-    last pos
-    - consider_ped: Tensor of shape (batch)
-    Output:
-    - loss: gives the eculidian displacement error
+def final_displacement_error(pred_pos, pred_pos_gt, consider_ped=None, mode='sum'):
+    """Computes the displacement error between predicted and groundtruth destinations.
+
+    Args:
+        pred_pos: Tensor of shape (batch, 2). Predicted last positions.
+        pred_pos_gt: Tensor of shape (seq_len, batch, 2). True last positions.
+        consider_ped: Tensor of shape (batch).
+        mode: Either sum or raw.
+
+    Returns:
+        Tensor of shape (,) giving the eculidian displacement error.
     """
     loss = pred_pos_gt - pred_pos
     loss = loss**2
