@@ -11,6 +11,14 @@ logger = logging.getLogger(__name__)
 
 
 def seq_collate(data):
+    """Merges a sample-list of length batchsize (specified in loader.data_loader).
+
+    Args:
+        data: List of samples from the dataset. Each sample is a tensor of shape (num_peds (batch_dim), 2, seq_len).
+
+    Returns:
+        tuple: Concatenated samples over batchsize. Transposed so that (seq_len, batchsize*num_peds, 2).
+    """
     (obs_seq_list, pred_seq_list, obs_seq_rel_list, pred_seq_rel_list,
      non_linear_ped_list, loss_mask_list) = zip(*data)
 
@@ -97,7 +105,7 @@ class TrajectoryDataset(Dataset):
 
         all_files = os.listdir(self.data_dir)
         all_files = [os.path.join(self.data_dir, _path) for _path in all_files]
-        num_peds_in_seq = []
+        self.num_peds_in_seq = []
         seq_list = []
         seq_list_rel = []
         loss_mask_list = []
@@ -147,7 +155,7 @@ class TrajectoryDataset(Dataset):
 
                 if num_peds_considered > min_ped:
                     non_linear_ped += _non_linear_ped
-                    num_peds_in_seq.append(num_peds_considered)
+                    self.num_peds_in_seq.append(num_peds_considered)
                     loss_mask_list.append(curr_loss_mask[:num_peds_considered])
                     seq_list.append(curr_seq[:num_peds_considered])
                     seq_list_rel.append(curr_seq_rel[:num_peds_considered])
@@ -169,7 +177,7 @@ class TrajectoryDataset(Dataset):
             seq_list_rel[:, :, self.obs_len:]).type(torch.float)
         self.loss_mask = torch.from_numpy(loss_mask_list).type(torch.float)
         self.non_linear_ped = torch.from_numpy(non_linear_ped).type(torch.float)
-        cum_start_idx = [0] + np.cumsum(num_peds_in_seq).tolist()
+        cum_start_idx = [0] + np.cumsum(self.num_peds_in_seq).tolist()
         self.seq_start_end = [
             (start, end)
             for start, end in zip(cum_start_idx, cum_start_idx[1:])

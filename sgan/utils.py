@@ -93,3 +93,19 @@ def get_dset_path(dset_name, dset_type):
     _dir = _dir.split("/")[:-1]
     _dir = "/".join(_dir)
     return os.path.join(_dir, 'datasets', dset_name, dset_type)
+
+
+def get_dtypes():
+    """Returns either cuda-dtype or cpu-dtype of sort long and float.
+
+    Args:
+        args: Parsed arguments. Only args.use_gpu is required here.
+
+    Returns:
+        long_dtype
+        float_dtype
+
+    """
+    if torch.cuda.is_available():
+        return torch.cuda.LongTensor, torch.cuda.FloatTensor
+    return torch.LongTensor, torch.FloatTensor

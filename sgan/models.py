@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
-
+from sgan.utils import get_dtypes
+long_dtype, dtype = get_dtypes()  # dtype is either torch.FloatTensor or torch.cuda.FloatTensor
 
 def make_mlp(dim_list, activation='relu', batch_norm=True, dropout=0.):
     """Create a multilayer perceptron.
@@ -41,9 +42,9 @@ def get_noise(shape, noise_type):
 
     """
     if noise_type == 'gaussian':
-        return torch.randn(*shape).cuda()
+        return torch.randn(*shape).type(dtype)
     elif noise_type == 'uniform':
-        return torch.rand(*shape).sub_(0.5).mul_(2.0).cuda()
+        return torch.rand(*shape).sub_(0.5).mul_(2.0).type(dtype)
     raise ValueError('Unrecognized noise type "%s"' % noise_type)
 
 
@@ -76,8 +77,8 @@ class Encoder(nn.Module):
         self.encoder = nn.LSTM(embedding_dim, h_dim, num_layers, dropout=dropout)
 
     def init_hidden(self, batch):
-        return (torch.zeros(self.num_layers, batch, self.h_dim).cuda(),
-                torch.zeros(self.num_layers, batch, self.h_dim).cuda())
+        return (torch.zeros(self.num_layers, batch, self.h_dim).type(dtype),
+                torch.zeros(self.num_layers, batch, self.h_dim).type(dtype))
 
     def forward(self, obs_traj):
         """ Forward function of the Trajectory Encoder.
@@ -92,7 +93,7 @@ class Encoder(nn.Module):
         """
         # Encode observed Trajectory
         batch = obs_traj.size(1)
-        obs_traj_embedding = self.embedding(obs_traj.view(-1, 2))
+        obs_traj_embedding = self.embedding(obs_traj.contiguous().view(-1, 2))
         obs_traj_embedding = obs_traj_embedding.view(-1, batch, self.embedding_dim)
         state_tuple = self.init_hidden(batch)
         output, state = self.encoder(obs_traj_embedding, state_tuple)
@@ -123,7 +124,7 @@ class Decoder(nn.Module):
             embedding_dim (int): Output dim of embedding (2 -> embedding_dim, via Linear layer).
             h_dim (int): Hidden dim of the LSTM (embedding_dim -> h_dim -> 2).
             mlp_dim (int): Central pooling layer dim.
-            pool_every_timestep (bool): Whether to use pooling.
+            pool_every_timestep (bool): Whether to use pooling. # Important: Can pooling be completely turned of here?
             embedding (nn.Linear): Embedding layer.
             decoder (nn.LSTM): Single sequence length decoding lstm.
             pool_net (nn.Module): PoolHiddenNet or SocialPooling.
@@ -149,7 +150,6 @@ class Decoder(nn.Module):
             if pooling_type == 'pool_net':
                 self.pool_net = PoolHiddenNet(embedding_dim=self.embedding_dim,
                                               h_dim=self.h_dim,
-                                              mlp_dim=mlp_dim,
                                               bottleneck_dim=bottleneck_dim,
                                               activation=activation,
                                               batch_norm=batch_norm,
@@ -196,7 +196,7 @@ class Decoder(nn.Module):
 
             if self.pool_every_timestep:
                 decoder_h = state_tuple[0]
-                pool_h = self.pool_net(decoder_h, seq_start_end, curr_pos)
+                pool_h = self.pool_net(decoder_h, seq_start_end, curr_pos)  # Important: Add attention here instead.
                 decoder_h = torch.cat([decoder_h.view(-1, self.h_dim), pool_h], dim=1)
                 decoder_h = self.mlp(decoder_h)
                 decoder_h = torch.unsqueeze(decoder_h, 0)
@@ -214,15 +214,21 @@ class Decoder(nn.Module):
 
 
 class PoolHiddenNet(nn.Module):
-    """Pooling module as proposed in our paper"""
+    """Pooling as proposed in SocialGAN Paper.
 
-    def __init__(
-            self, embedding_dim=64, h_dim=64, mlp_dim=1024, bottleneck_dim=1024,
-            activation='relu', batch_norm=True, dropout=0.0
-    ):
+    Args:
+        embedding_dim:
+        h_dim:
+        bottleneck_dim:
+        activation:
+        batch_norm:
+        dropout:
+    """
+
+    def __init__(self, embedding_dim=64, h_dim=64, bottleneck_dim=1024,
+                 activation='relu', batch_norm=True, dropout=0.0):
         super(PoolHiddenNet, self).__init__()
 
-        self.mlp_dim = 1024
         self.h_dim = h_dim
         self.bottleneck_dim = bottleneck_dim
         self.embedding_dim = embedding_dim
@@ -231,19 +237,20 @@ class PoolHiddenNet(nn.Module):
         mlp_pre_pool_dims = [mlp_pre_dim, 512, bottleneck_dim]
 
         self.spatial_embedding = nn.Linear(2, embedding_dim)
-        self.mlp_pre_pool = make_mlp(
-            mlp_pre_pool_dims,
-            activation=activation,
-            batch_norm=batch_norm,
-            dropout=dropout)
+        self.mlp_pre_pool = make_mlp(mlp_pre_pool_dims,
+                                     activation=activation,
+                                     batch_norm=batch_norm,
+                                     dropout=dropout)
 
     def repeat(self, tensor, num_reps):
-        """
-        Inputs:
-        -tensor: 2D tensor of any shape
-        -num_reps: Number of times to repeat each row
-        Outpus:
-        -repeat_tensor: Repeat each row such that: R1, R1, R2, R2
+        """Repeats tensor along batch? dimension.
+
+        Args:
+            tensor: 2D tensor of any shape.
+            num_reps: Number of times to repeat each row.
+
+        Returns:
+            Repeats each row such that: R1, R1, R2, R2.
         """
         col_len = tensor.size(1)
         tensor = tensor.unsqueeze(dim=1).repeat(1, num_reps, 1)
@@ -251,20 +258,23 @@ class PoolHiddenNet(nn.Module):
         return tensor
 
     def forward(self, h_states, seq_start_end, end_pos):
-        """
-        Inputs:
-        - h_states: Tensor of shape (num_layers, batch, h_dim)
-        - seq_start_end: A list of tuples which delimit sequences within batch
-        - end_pos: Tensor of shape (batch, 2)
-        Output:
-        - pool_h: Tensor of shape (batch, bottleneck_dim)
+        """Forward function of PoolHiddenNet.
+
+        Args:
+            h_states: Tensor of shape (num_layers, batch, h_dim).
+            seq_start_end: A list of tuples which delimit sequences within batch.
+            end_pos: Tensor of shape (batch, 2). Absolute end position of obs_traj.
+
+        Returns:
+            Tensor of shape (batch, bottleneck_dim). # Important: Different output shape than SocialPooling.
         """
         pool_h = []
         for _, (start, end) in enumerate(seq_start_end):
             start = start.item()
             end = end.item()
-            num_ped = end - start
-            curr_hidden = h_states.view(-1, self.h_dim)[start:end]
+            num_ped = end - start  # IMPORTANT: seq_start_end comes from merging batches with the seq_collate function.
+            curr_hidden = h_states.view(-1, self.h_dim)[
+                          start:end]  # IMPORTANT: modify the hidden states for scences seperately. This line works only with num_layers = 1.
             curr_end_pos = end_pos[start:end]
             # Repeat -> H1, H2, H1, H2
             curr_hidden_1 = curr_hidden.repeat(num_ped, 1)
@@ -283,13 +293,22 @@ class PoolHiddenNet(nn.Module):
 
 
 class SocialPooling(nn.Module):
-    """Current state of the art pooling mechanism:
-    http://cvgl.stanford.edu/papers/CVPR16_Social_LSTM.pdf"""
+    """Another pooling mechanism:
+    http://cvgl.stanford.edu/papers/CVPR16_Social_LSTM.pdf
 
-    def __init__(
-            self, h_dim=64, activation='relu', batch_norm=True, dropout=0.0,
-            neighborhood_size=2.0, grid_size=8, pool_dim=None
-    ):
+    Args:
+        h_dim:
+        activation:
+        batch_norm:
+        dropout:
+        neighborhood_size:
+        grid_size:
+        pool_dim:
+    """
+
+    def __init__(self, h_dim=64, activation='relu', batch_norm=True, dropout=0.0,
+                 neighborhood_size=2.0, grid_size=8, pool_dim=None):
+
         super(SocialPooling, self).__init__()
         self.h_dim = h_dim
         self.grid_size = grid_size
@@ -299,14 +318,19 @@ class SocialPooling(nn.Module):
         else:
             mlp_pool_dims = [grid_size * grid_size * h_dim, h_dim]
 
-        self.mlp_pool = make_mlp(
-            mlp_pool_dims,
-            activation=activation,
-            batch_norm=batch_norm,
-            dropout=dropout
-        )
-
+        self.mlp_pool = make_mlp(mlp_pool_dims,
+                                 activation=activation,
+                                 batch_norm=batch_norm,
+                                 dropout=dropout)
     def get_bounds(self, ped_pos):
+        """
+
+        Args:
+            ped_pos:
+
+        Returns:
+
+        """
         top_left_x = ped_pos[:, 0] - self.neighborhood_size / 2
         top_left_y = ped_pos[:, 1] + self.neighborhood_size / 2
         bottom_right_x = ped_pos[:, 0] + self.neighborhood_size / 2
@@ -316,6 +340,15 @@ class SocialPooling(nn.Module):
         return top_left, bottom_right
 
     def get_grid_locations(self, top_left, other_pos):
+        """
+
+        Args:
+            top_left:
+            other_pos:
+
+        Returns:
+
+        """
         cell_x = torch.floor(
             ((other_pos[:, 0] - top_left[:, 0]) / self.neighborhood_size) *
             self.grid_size)
@@ -326,12 +359,14 @@ class SocialPooling(nn.Module):
         return grid_pos
 
     def repeat(self, tensor, num_reps):
-        """
-        Inputs:
-        -tensor: 2D tensor of any shape
-        -num_reps: Number of times to repeat each row
-        Outpus:
-        -repeat_tensor: Repeat each row such that: R1, R1, R2, R2
+        """Repeats tensor along batch? dimension.
+
+        Args:
+            tensor: 2D tensor of any shape.
+            num_reps: Number of times to repeat each row.
+
+        Returns:
+            Repeats each row such that: R1, R1, R2, R2.
         """
         col_len = tensor.size(1)
         tensor = tensor.unsqueeze(dim=1).repeat(1, num_reps, 1)
@@ -339,13 +374,15 @@ class SocialPooling(nn.Module):
         return tensor
 
     def forward(self, h_states, seq_start_end, end_pos):
-        """
-        Inputs:
-        - h_states: Tesnsor of shape (num_layers, batch, h_dim)
-        - seq_start_end: A list of tuples which delimit sequences within batch.
-        - end_pos: Absolute end position of obs_traj (batch, 2)
-        Output:
-        - pool_h: Tensor of shape (batch, h_dim)
+        """Forward function of SocialPooling.
+
+        Args:
+            h_states: Tensor of shape (num_layers, batch, h_dim).
+            seq_start_end: A list of tuples which delimit sequences within batch.
+            end_pos: Tensor of shape (batch, 2). Absolute end position of obs_traj.
+
+        Returns:
+            Tensor of shape (batch, h_dim). # Important: Different output shape than PoolHiddenNet
         """
         pool_h = []
         for _, (start, end) in enumerate(seq_start_end):
@@ -475,7 +512,6 @@ class TrajectoryGenerator(nn.Module):
         if pooling_type == 'pool_net':
             self.pool_net = PoolHiddenNet(embedding_dim=self.embedding_dim,
                                           h_dim=encoder_h_dim,
-                                          mlp_dim=mlp_dim,
                                           bottleneck_dim=bottleneck_dim,
                                           activation=activation,
                                           batch_norm=batch_norm)
@@ -507,14 +543,18 @@ class TrajectoryGenerator(nn.Module):
                                                 dropout=dropout)
 
     def add_noise(self, _input, seq_start_end, user_noise=None):
-        """
-        Inputs:
-        - _input: Tensor of shape (_, decoder_h_dim - noise_first_dim)
-        - seq_start_end: A list of tuples which delimit sequences within batch.
-        - user_noise: Generally used for inference when you want to see
-        relation between different types of noise and outputs.
-        Outputs:
-        - decoder_h: Tensor of shape (_, decoder_h_dim)
+        """Concatenates the input vector with a noise vector.
+
+        Args:
+            _input: Tensor of shape (_, decoder_h_dim - noise_first_dim).
+            seq_start_end: A list of tuples which delimit sequences within batch.
+            user_noise: Generally used for inference when you want to see
+                relation between different types of noise and outputs.
+
+        Returns:
+            Tensor of shape (_, decoder_h_dim)
+
+        # TODO Understand this ugly function.
         """
         if not self.noise_dim:
             return _input
@@ -583,7 +623,7 @@ class TrajectoryGenerator(nn.Module):
         decoder_h = self.add_noise(noise_input, seq_start_end, user_noise=user_noise)
         decoder_h = torch.unsqueeze(decoder_h, 0)
 
-        decoder_c = torch.zeros(self.num_layers, batch, self.decoder_h_dim).cuda()
+        decoder_c = torch.zeros(self.num_layers, batch, self.decoder_h_dim).type(dtype)
 
         state_tuple = (decoder_h, decoder_c)
         last_pos = obs_traj[-1]
@@ -611,6 +651,7 @@ class TrajectoryDiscriminator(nn.Module):
         dropout:
         d_type:
     """
+
     def __init__(self, obs_len, pred_len, embedding_dim=64, h_dim=64, mlp_dim=1024, num_layers=1,
                  activation='relu', batch_norm=True, dropout=0.0, d_type='local'):
         super(TrajectoryDiscriminator, self).__init__()

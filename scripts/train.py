@@ -93,17 +93,6 @@ parser.add_argument('--timing', default=0, type=int)
 parser.add_argument('--gpu_num', default="0", type=str)
 
 
-def init_weights(m):
-    """Initializes weights of a Linear nn.Module with Kaiming Normal.
-
-    Args:
-        m: nn.Module (only affects nn.Linear)
-    """
-    classname = m.__class__.__name__
-    if classname.find('Linear') != -1:
-        nn.init.kaiming_normal_(m.weight)
-
-
 def get_dtypes(args):
     """Returns either cuda-dtype or cpu-dtype of sort long and float.
 
@@ -121,6 +110,17 @@ def get_dtypes(args):
         long_dtype = torch.cuda.LongTensor
         float_dtype = torch.cuda.FloatTensor
     return long_dtype, float_dtype
+
+
+def init_weights(m):
+    """Initializes weights of a Linear nn.Module with Kaiming Normal.
+
+    Args:
+        m: nn.Module (only affects nn.Linear)
+    """
+    classname = m.__class__.__name__
+    if classname.find('Linear') != -1:
+        nn.init.kaiming_normal_(m.weight)
 
 
 def main(args):
@@ -454,20 +454,20 @@ def generator_step(args, batch, generator, discriminator, g_loss_fn, optimizer_g
         pred_traj_fake_rel = generator_out
         pred_traj_fake = relative_to_abs(pred_traj_fake_rel, obs_traj[-1])
 
-        if args.l2_loss_weight > 0: # IMPORTANT: Compute loss on displacements? Not intended. Default is zero.
+        if args.l2_loss_weight > 0: # IMPORTANT: Compute loss on displacements?
             g_l2_loss_rel.append(args.l2_loss_weight * l2_loss(pred_traj_fake_rel,
                                                                pred_traj_gt_rel,
                                                                loss_mask,
                                                                mode='raw'))
 
     g_l2_loss_sum_rel = torch.zeros(1).to(pred_traj_gt)
-    if args.l2_loss_weight > 0: # IMPORTANT: Compute loss on displacements? Not intended. Default is zero.
+    if args.l2_loss_weight > 0: # IMPORTANT: Compute loss on displacements?
         g_l2_loss_rel = torch.stack(g_l2_loss_rel, dim=1)
+        # IMPORTANT: THIS IS THEIR DIVERSITY LOSS, cp. paragraph 3.5
         for start, end in seq_start_end.data:
             _g_l2_loss_rel = g_l2_loss_rel[start:end]
             _g_l2_loss_rel = torch.sum(_g_l2_loss_rel, dim=0)
-            _g_l2_loss_rel = torch.min(_g_l2_loss_rel) / torch.sum(
-                loss_mask[start:end])
+            _g_l2_loss_rel = torch.min(_g_l2_loss_rel) / torch.sum(loss_mask[start:end])
             g_l2_loss_sum_rel += _g_l2_loss_rel
         losses['G_l2_loss_rel'] = g_l2_loss_sum_rel.item()
         loss += g_l2_loss_sum_rel
