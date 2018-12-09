@@ -1,13 +1,11 @@
 import os
 import math
-
-try:
-    torch
-except:
-    import torch
-    from torch.utils.data import Dataset
+import torch
+from torch.utils.data import Dataset
 import numpy as np
 from scipy.spatial.distance import pdist, squareform
+from torch.utils.data import DataLoader
+
 
 def read_file(_path, delim='\t'):
     data = []
@@ -21,6 +19,7 @@ def read_file(_path, delim='\t'):
             line = [float(i) for i in line]
             data.append(line)
     return np.asarray(data)
+
 
 class Trajectories(Dataset):
     """Initializes a pytorch dataset. Adaptation of
@@ -43,20 +42,18 @@ class Trajectories(Dataset):
         max_peds (int): Maximal number of pedestrians.
         seq_len (int): Training sequence length + groundtruth length.
         peds_per_seq (list): Number of agents per sequence.
-        train_traj (tensor): Training trajectories #(num_seq, train_len,
+        xy_in (tensor): Training trajectories #(num_seq, train_len,
             max_peds, 2).
-        train_dtraj (tensor): Like train_traj for dx, dy.
-        pred_traj (tensor): Like train_traj for the subsequent pred_len
+        dxdy_in (tensor): Like xy_in for dx, dy.
+        xy_out (tensor): Like xy_in for the subsequent pred_len
             frames.
-        pred_dtraj (tensor): Like pred_traj for dx, dy.
+        dxdy_out (tensor): Like xy_out for dx, dy.
         loss_masks (array): Masks for discriminator of zeros and ones.
         distances (tensor): Pairwise distances of pedestrians. Per sequence
             and timestep.
     """
-            
-    
-    def __init__(self, data_dir, obs_len = 8, pred_len = 12,
-                 min_peds=1, max_peds = 32, delim = '\t'):
+
+    def __init__(self, data_dir, obs_len=8, pred_len=12, min_peds=1, max_peds=32, delim='\t'):
         super(Trajectories, self).__init__()
         self.data_dir = data_dir
         all_files = os.listdir(self.data_dir)
@@ -66,64 +63,64 @@ class Trajectories(Dataset):
         self.train_len = obs_len
         self.pred_len = pred_len
         self.seq_len = self.train_len + self.pred_len
-        
+
         self.peds_per_seq = []
         self.loss_masks = []
-        
+
         trajectories = []
         dtrajectories = []
-        
+
         for path in self.all_files:
-            data = read_file(path, delim) # (frames, pid, x, y)
+            data = read_file(path, delim)  # (frames, pid, x, y)
             frames = np.unique(data[:, 0]).tolist()
-            frame_data = [data[np.where(data[:, 0]==x)] for x in frames]
+            frame_data = [data[np.where(data[:, 0] == x)] for x in frames]
             for idx, frame in enumerate(frame_data):
-                
+
                 # [[idx, 1., 5.4, 8.33], ... , [idx+seq_len, 3., 5.3, 2.9]]
                 curr_seq_data = np.concatenate(frame_data[idx:idx + self.seq_len], axis=0)
                 peds_in_curr_seq = np.unique(curr_seq_data[:, 1])
-                
-                curr_seq = np.zeros((self.seq_len, self.max_peds, 2)) # (num_peds, xy, seq_len)
+
+                curr_seq = np.zeros((self.seq_len, self.max_peds, 2))  # (num_peds, xy, seq_len)
                 curr_seq_rel = np.zeros((self.seq_len, self.max_peds, 2))
                 curr_loss_mask = np.zeros((self.seq_len, self.max_peds))
-                peds_considered = 0 # initialize by 0
-                
+                peds_considered = 0  # initialize by 0
+
                 for _, ped_id in enumerate(peds_in_curr_seq):
-                    
-                    xy = curr_seq_data[curr_seq_data[:, 1] == ped_id, :] # (frames, ped_id, x, y)
-                    
-                    #discard pedestrians that are less then seq_len in the whole data
+
+                    xy = curr_seq_data[curr_seq_data[:, 1] == ped_id, :]  # (frames, ped_id, x, y)
+
+                    # discard pedestrians that are less then seq_len in the whole data
                     xy = np.around(xy, decimals=4)
                     pad_front = frames.index(xy[0, 0]) - idx
                     pad_end = frames.index(xy[-1, 0]) - idx + 1
                     if pad_end - pad_front != self.seq_len:
                         continue
-                    
-                    #import pdb; pdb.set_trace();
+
+                    # import pdb; pdb.set_trace();
                     # Get dx and dy (relative coordinates)
-                    xy = xy[:, 2:] # (2, seq_len)
+                    xy = xy[:, 2:]  # (2, seq_len)
                     dxy = np.zeros(xy.shape)
-                    dxy[1:, :] = xy[1:, :] - xy[:-1, :] # dx, dy
+                    dxy[1:, :] = xy[1:, :] - xy[:-1, :]  # dx, dy
                     _idx = peds_considered
-                    curr_seq[pad_front:pad_end,  _idx, :] = xy # fill array with all pedestrians
+                    curr_seq[pad_front:pad_end, _idx, :] = xy  # fill array with all pedestrians
                     curr_seq_rel[pad_front:pad_end, _idx, :] = dxy
-                    curr_loss_mask[pad_front:pad_end, _idx] = 1 # ground truth for discriminator ?
+                    curr_loss_mask[pad_front:pad_end, _idx] = 1  # ground truth for discriminator ?
                     peds_considered += 1
-                
+
                 # append to data if more than min_peds were observed
                 if peds_considered > self.min_peds:
                     self.peds_per_seq.append(peds_considered)
                     self.loss_masks.append(curr_loss_mask)
-                    trajectories.append(curr_seq) # (num_seq, num_peds, xy, seq_len)
+                    trajectories.append(curr_seq)  # (num_seq, num_peds, xy, seq_len)
                     dtrajectories.append(curr_seq_rel)
-        
+
         # List -> Array         
         trajectories = np.array(trajectories)
         dtrajectories = np.array(dtrajectories)
         self.loss_masks = np.array(self.loss_masks)
-        
+
         # Compute pairwise distances
-        self.distances = np.zeros([len(trajectories), self.seq_len, 
+        self.distances = np.zeros([len(trajectories), self.seq_len,
                                    self.max_peds, self.max_peds])
         for traj_idx, traj in enumerate(trajectories):
             for seq_idx, seq in enumerate(traj):
@@ -133,26 +130,27 @@ class Trajectories(Dataset):
                 dist[num_peds::] = _filldist
                 dist[:, num_peds::] = _filldist
                 self.distances[traj_idx, seq_idx] = dist
-        
+
         # Array -> Torch Tensor
-        self.train_traj = torch.Tensor(trajectories[:, :self.train_len]).float()
-        self.train_dtraj = torch.Tensor(dtrajectories[:, :self.train_len]).float()
-        self.pred_traj = torch.Tensor(trajectories[:, :self.pred_len]).float()
-        self.pred_dtraj = torch.Tensor(dtrajectories[:, :self.pred_len]).float()
-        self.loss_masks = torch.Tensor(self.loss_masks).float()     
+        self.xy_in = torch.Tensor(trajectories[:, :self.train_len]).float()
+        self.dxdy_in = torch.Tensor(dtrajectories[:, :self.train_len]).float()
+        self.xy_out = torch.Tensor(trajectories[:, :self.pred_len]).float()
+        self.dxdy_out = torch.Tensor(dtrajectories[:, :self.pred_len]).float()
+        self.loss_masks = torch.Tensor(self.loss_masks).float()
         self.distances = torch.Tensor(self.distances).float()
 
     def __len__(self):
-        return len(self.train_traj)
-    
+        return len(self.xy_in)
+
     def __getitem__(self, idx):
-        out = {'train': self.train_traj[idx],
-               'dtrain': self.train_dtraj[idx],
-               'groundtruth': self.pred_traj[idx],
-               'dgroundtruth': self.pred_dtraj[idx],
+        out = {'xy_in': self.xy_in[idx],
+               'dxdy_in': self.dxdy_in[idx],
+               'xy_out': self.xy_out[idx],
+               'dxdy_out': self.dxdy_out[idx],
                'distances': self.distances[idx],
                'lossmask': self.loss_masks[idx]}
         return out
+
 
 def poly_fit(traj, traj_len, threshold):
     """
@@ -170,12 +168,14 @@ def poly_fit(traj, traj_len, threshold):
         return 1.0
     else:
         return 0.0
-    
+
+
 class TrajectoryDataset(Dataset):
     """Dataloder for the Trajectory datasets"""
+
     def __init__(
-        self, data_dir, obs_len=8, pred_len=12, skip=1, threshold=0.002,
-        min_ped=1, delim='\t'
+            self, data_dir, obs_len=8, pred_len=12, skip=1, threshold=0.002,
+            min_ped=1, delim='\t'
     ):
         """
         Args:
@@ -273,19 +273,64 @@ class TrajectoryDataset(Dataset):
         self.loss_mask = torch.from_numpy(loss_mask_list).type(torch.float)
         self.non_linear_ped = torch.from_numpy(non_linear_ped).type(torch.float)
         cum_start_idx = [0] + np.cumsum(num_peds_in_seq).tolist()
-        self.seq_start_end = [
-            (start, end)
-            for start, end in zip(cum_start_idx, cum_start_idx[1:])
-        ]
+        self.seq_start_end = [(start, end) for start, end in zip(cum_start_idx, cum_start_idx[1:])]
 
     def __len__(self):
         return self.num_seq
 
     def __getitem__(self, index):
         start, end = self.seq_start_end[index]
-        out = [
-            self.obs_traj[start:end, :], self.pred_traj[start:end, :],
-            self.obs_traj_rel[start:end, :], self.pred_traj_rel[start:end, :],
-            self.non_linear_ped[start:end], self.loss_mask[start:end, :]
-        ]
-        return out
+        return (self.obs_traj[start:end, :], self.pred_traj[start:end, :],
+               self.obs_traj_rel[start:end, :], self.pred_traj_rel[start:end, :],
+               self.non_linear_ped[start:end], self.loss_mask[start:end, :])
+
+
+def seq_collate(data):
+    """Merges a sample-list of length batchsize (specified in data_loader).
+
+    Args:
+        data: List of samples from the dataset. Each sample is a tensor of shape (num_peds (batch_dim), 2, seq_len).
+
+    Returns:
+        tuple: Concatenated samples over batchsize. Transposed so that (seq_len, batchsize*num_peds, 2).
+    """
+    (obs_seq_list, pred_seq_list, obs_seq_rel_list, pred_seq_rel_list,
+     non_linear_ped_list, loss_mask_list) = zip(*data)
+
+    _len = [len(seq) for seq in obs_seq_list]
+    cum_start_idx = [0] + np.cumsum(_len).tolist()
+    seq_start_end = [[start, end]
+                     for start, end in zip(cum_start_idx, cum_start_idx[1:])]
+
+    # Data format: batch, input_size, seq_len
+    # LSTM input format: seq_len, batch, input_size
+    obs_traj = torch.cat(obs_seq_list, dim=0).permute(2, 0, 1)
+    pred_traj = torch.cat(pred_seq_list, dim=0).permute(2, 0, 1)
+    obs_traj_rel = torch.cat(obs_seq_rel_list, dim=0).permute(2, 0, 1)
+    pred_traj_rel = torch.cat(pred_seq_rel_list, dim=0).permute(2, 0, 1)
+    non_linear_ped = torch.cat(non_linear_ped_list)
+    loss_mask = torch.cat(loss_mask_list, dim=0)
+    seq_start_end = torch.LongTensor(seq_start_end)
+
+    out = {'xy_in': obs_traj,
+           'dxdy_in':  obs_traj_rel,
+           'xy_out': pred_traj,
+           'dxdy_out': pred_traj_rel,
+           'non_linear_ped': non_linear_ped,
+           'loss_mask': loss_mask,
+           'seq_start_end': seq_start_end}
+
+    return out
+
+
+def data_loader(in_len, out_len, batch_size, num_workers, path):
+    dset = TrajectoryDataset(path,
+                             obs_len=in_len,
+                             pred_len=out_len)
+
+    loader = DataLoader(dset,
+                        batch_size=batch_size,
+                        shuffle=True,
+                        num_workers=num_workers,
+                        collate_fn=seq_collate)
+    return dset, loader

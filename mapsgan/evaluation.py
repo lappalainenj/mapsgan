@@ -1,6 +1,11 @@
 from matplotlib import pyplot as plt
 import seaborn as sns
 
+class Evaluation:
+    """This class contains evaluation metrics."""
+    NotImplemented
+
+
 class PlotProps:
     colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728',
               '#9467bd', '#8c564b', '#e377c2', '#7f7f7f',
@@ -42,11 +47,37 @@ class PlotProps:
     def legend(self, loc='best', fontsize=15):
         plt.legend(loc=loc, fontsize=fontsize, frameon=False)
 
-class Evaluation:
-    """This class contains evaluation metrics."""
-    NotImplemented
 
 class Visualization(Evaluation):
-    """Leverages evaluation metrics to create plots."""
-    NotImplemented
+    """Create plots. Can leverage the evaluation metrics."""
     plot = PlotProps()
+
+    def __init__(self):
+        pass
+
+    def loss(self, loss_history, types = None, figsize = [16, 4], figtitle = ''):
+        """Plot losses.
+
+        Args:
+            loss_history (dict): Loss history attribute of a solver.
+            types (list of str): Specify which losses to plot.
+
+        Returns:
+            ax object
+        """
+        losses = loss_history['generator']
+        losses.update(loss_history['discriminator'])
+        if not types:
+            types = losses.keys()
+        losses = {type: loss for type, loss in losses.items() if type in types}  # filter out types
+        num_axes = len(losses)
+        fig = self.plot.init_figure(figsize)
+        for i, (type, loss) in enumerate(losses.items()):
+            ax = self.plot.init_subplot(type, tot_tup=(1, num_axes), sp_tup=(0, i))
+            ax.plot(loss)
+            ax.set_xlabel('Checkpoints')
+            ax.set_yticks([])
+            if i == 0:
+                ax.set_ylabel('Loss (a.u.)')
+        if figtitle:
+            fig.suptitle(figtitle)

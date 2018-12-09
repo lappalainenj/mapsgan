@@ -3,6 +3,8 @@ Architechtural modules of social physical attentive multimodal conditional gener
 
 authors: Janne Lappalainen (email)
          Yagmur Yener (yagmur.yener@tum.de)
+
+TODO: Attention must be added into the Decoder from sgan, instead of pool_net (line 199).
 """
 
 import torch
@@ -252,7 +254,7 @@ class PhysicalAttention(nn.Module):
 # GAN Modules ------------------------------------------------------------------------------------
 
 
-class DecoderGAN(nn.Module):  # also called "Generator"
+class DecoderGAN(nn.Module):  # also called "Generator" # IMPORTANT: Unfortunately not.
 
     def __init__(self, input_dim=128, embedding_dim=16, hidden_dim=32, output_dim=2):
         super(DecoderGAN, self).__init__()
