@@ -75,7 +75,7 @@ class BaseSolver:
                     losses_g = self.generator_step(batch, generator, discriminator, optimizer_g)
                     gsteps -= 1
 
-            if epoch % checkpoint_every == 0:
+            if epochs % checkpoint_every == 0:
                 self._checkpoint(losses_g, losses_d)
                 self._pprint()
 
@@ -203,7 +203,7 @@ class Solver(BaseSolver):
         scores_real = discriminator(xy_real, seq_start_end)
 
         target_real = torch.ones_like(scores_real).type(dtype) * random.uniform(0.7, 1.2)
-        target_fake = torch.ones_like(scores_fake).type(dtype) * random.uniform(0., 0.3)
+        target_fake = torch.zeros_like(scores_fake).type(dtype) * random.uniform(0., 0.3)
 
         gan_loss_real = loss_fn_gan(scores_real, target_real)
         gan_loss_fake = loss_fn_gan(scores_fake, target_fake)
@@ -326,7 +326,7 @@ class SGANSolver(BaseSolver):
         scores_real = discriminator(xy_real, dxdy_real, seq_start_end)
 
         target_real = torch.ones_like(scores_real).type(dtype) * random.uniform(0.7, 1.2)
-        target_fake = torch.ones_like(scores_fake).type(dtype) * random.uniform(0., 0.3)
+        target_fake = torch.zeros_like(scores_fake).type(dtype) * random.uniform(0., 0.3)
 
         gan_loss_real = loss_fn_gan(scores_real, target_real)
         gan_loss_fake = loss_fn_gan(scores_fake, target_fake)
