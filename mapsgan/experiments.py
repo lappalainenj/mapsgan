@@ -1,9 +1,10 @@
 from pathlib import Path
+import os
 
 import numpy as np
 import cv2
 
-root_path = Path('/mnt/Clouds/MapsGAN/')
+root_path = Path(os.path.realpath(__file__)).parent.parent.parent
 
 
 class Experiment:

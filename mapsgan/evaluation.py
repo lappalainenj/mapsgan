@@ -1,5 +1,6 @@
 from matplotlib import pyplot as plt
 import seaborn as sns
+from matplotlib.pyplot import cm
 
 class Evaluation:
     """This class contains evaluation metrics."""
@@ -54,6 +55,34 @@ class Visualization(Evaluation):
 
     def __init__(self):
         pass
+
+    def trajectories(self, output, figsize = [16, 4], num_scenes = 70):
+        """
+
+        Args:
+            output: 2D list of 3D matrices [scenes][in/out](time steps, agents in scene, x/y)
+            figsize: size of the matplotlib figure
+            num_scenes: max num scenes
+
+        Returns:
+
+        todo: check with real output, plot on the scene?
+        """
+        fig = self.plot.init_figure(figsize)
+        for s in range(num_scenes):
+            num_agents = output[s][0](0,:,0).shape[1]
+            color = iter(cm.tab10())
+            ax = self.plot.init_subplot(type, tot_tup=(num_agents,1), sp_tup=(s, 0))
+            for a in range(num_agents):
+                c = next(color)
+                ax.plot( output[s][0][:, a, 0], output[s][0][:, a, 1], 'o', c=c )
+                ax.plot( output[s][1][:, a, 0], output[s][1][:, a, 1], 'o', c=c )
+        plt.show()
+
+
+
+
+
 
     def loss(self, loss_history, types = None, figsize = [16, 4], figtitle = ''):
         """Plot losses.
