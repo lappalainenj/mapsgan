@@ -1,2 +1,2 @@
 # mapsgan
-Socially physically attentive multimodal GAN for pedestrian trajectory prediction.
+Multimodal, attentive, physical, and social GAN for pedestrian trajectory prediction.
