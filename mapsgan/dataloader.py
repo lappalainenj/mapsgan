@@ -171,24 +171,22 @@ def poly_fit(traj, traj_len, threshold):
 
 
 class TrajectoryDataset(Dataset):
-    """Dataloder for the Trajectory datasets"""
+    """Dataloder for the Trajectory datasets
 
-    def __init__(
-            self, data_dir, obs_len=8, pred_len=12, skip=1, threshold=0.002,
-            min_ped=1, delim='\t'
-    ):
-        """
-        Args:
-        - data_dir: Directory containing dataset files in the format
-        <frame_id> <ped_id> <x> <y>
-        - obs_len: Number of time-steps in input trajectories
-        - pred_len: Number of time-steps in output trajectories
-        - skip: Number of frames to skip while making the dataset
-        - threshold: Minimum error to be considered for non linear traj
-        when using a linear predictor
-        - min_ped: Minimum number of pedestrians that should be in a seqeunce
-        - delim: Delimiter in the dataset files
-        """
+    Args:
+        data_dir: Directory containing dataset files in the format <frame_id> <ped_id> <x> <y>
+        obs_len: Number of time-steps in input trajectories
+        pred_len: Number of time-steps in output trajectories
+        skip: Number of frames to skip while making the dataset
+        threshold: Minimum error to be considered for non linear when using a linear predictor
+        min_ped:   Minimum number of pedestrians that should be in a seqeunce
+        delim:  Delimiter in the dataset files
+
+    TODO: Add distances.
+    """
+    def __init__(self, data_dir, obs_len=8, pred_len=12, skip=1, threshold=0.002,
+                 min_ped=1, delim='\t'):
+
         super(TrajectoryDataset, self).__init__()
 
         self.data_dir = data_dir
@@ -281,8 +279,8 @@ class TrajectoryDataset(Dataset):
     def __getitem__(self, index):
         start, end = self.seq_start_end[index]
         return (self.obs_traj[start:end, :], self.pred_traj[start:end, :],
-               self.obs_traj_rel[start:end, :], self.pred_traj_rel[start:end, :],
-               self.non_linear_ped[start:end], self.loss_mask[start:end, :])
+                self.obs_traj_rel[start:end, :], self.pred_traj_rel[start:end, :],
+                self.non_linear_ped[start:end], self.loss_mask[start:end, :])
 
 
 def seq_collate(data):
@@ -313,7 +311,7 @@ def seq_collate(data):
     seq_start_end = torch.LongTensor(seq_start_end)
 
     out = {'xy_in': obs_traj,
-           'dxdy_in':  obs_traj_rel,
+           'dxdy_in': obs_traj_rel,
            'xy_out': pred_traj,
            'dxdy_out': pred_traj_rel,
            'non_linear_ped': non_linear_ped,
