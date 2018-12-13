@@ -1,6 +1,7 @@
 import random
 import torch
 from torch import nn
+import numpy as np
 from mapsgan.utils import get_dtypes, relative_to_abs, init_weights
 from mapsgan.losses import l2_loss as loss_fn_l2
 
@@ -27,12 +28,15 @@ class BaseSolver:
     Important: All method here should be generic enough to serve all solvers.
     """
 
-    def __init__(self, models, optim=torch.optim.Adam, optims_args=None, loss_fns=None, init_params=False):
-        self.models = models
+    def __init__(self, generator, discriminator, optim=torch.optim.Adam, optims_args=None, loss_fns=None,
+                 init_params=False):
+        self.generator = generator
+        self.discriminator = discriminator
+        models = [self.generator, self.discriminator]
         if init_params:
-            [model.apply(init_weights) for model in self.models.values()]
+            [model.apply(init_weights) for model in models]
         if cuda:
-            [model.cuda() for model in self.models.values()]
+            [model.cuda() for model in models]
         self.optim = optim
         self.optims_args = optims_args
         if optims_args:
@@ -50,15 +54,15 @@ class BaseSolver:
 
         Args:
             loader: Dataloader.
-            num_epochs (int): Number of epochs.
+            epochs (int): Number of epochs.
             checkpoint_every (int): Determines for which epochs a checkpoint is created.
             steps (dict): Steps to take on the same batch for generator and discriminator.
 
         Important: Keep generic to suit all Solvers.
         """
-        generator = self.models['generator']
+        generator = self.generator
         generator.train()
-        discriminator = self.models['discriminator']
+        discriminator = self.discriminator
         discriminator.train()
         optimizer_g = self.optim(generator.parameters(), **self.optims_args['generator'])
         optimizer_d = self.optim(discriminator.parameters(), **self.optims_args['discriminator'])
@@ -81,10 +85,32 @@ class BaseSolver:
 
             epochs -= 1
 
-    def test(self, loader, num_epochs):
-        """Tests the generator on unseen data."""
-        # TODO: What evaluation metrics to use?
-        return NotImplemented
+    def test(self, loader, return_gt=False):
+        """Tests the generator on unseen data.
+
+        Args:
+            loader: Dataloader.
+            return_gt: If True, return tuple of (groundtruth, prediction) for each scene instead of (input, prediction).
+        """
+        generator = self.generator
+        generator.eval()
+        out = []
+        for batch in loader:
+            xy_in = batch['xy_in']
+            xy_out = batch['xy_out']
+            dxdy_in = batch['dxdy_in']
+            seq_start_end = batch['seq_start_end']
+            dxdy_pred = generator(xy_in, dxdy_in, seq_start_end)
+            xy_pred = relative_to_abs(dxdy_pred, xy_in[-1])
+            for seq in seq_start_end:
+                start, end = seq
+                if return_gt:
+                    out.append((xy_out[:, start:end].numpy(),
+                                xy_pred[:, start:end].detach().numpy()))
+                else:
+                    out.append((xy_in[:, start:end].numpy(),
+                                xy_pred[:, start:end].detach().numpy()))
+        return out
 
     def _reset_histories(self):
         self.train_loss_history = {'generator': {'G_gan': [], 'G_norm': [], 'G_total': []},
@@ -128,8 +154,9 @@ class Solver(BaseSolver):
     See BaseSolver for detailed docstring.
     """
 
-    def __init__(self, models, optim=torch.optim.Adam, optims_args=None, loss_fns=None, init_params=False):
-        super().__init__(models, optim, optims_args, loss_fns, init_params)
+    def __init__(self, generator, discriminator, optim=torch.optim.Adam, optims_args=None, loss_fns=None,
+                 init_params=False):
+        super().__init__(generator, discriminator, optim, optims_args, loss_fns, init_params)
 
     def generator_step(self, batch, generator, discriminator, optimizer_g):
         """Generator optimization step.
@@ -224,8 +251,9 @@ class SGANSolver(BaseSolver):
     Important note: For now we store the many arguments used in SGAN in the experiment object.
     """
 
-    def __init__(self, models, experiment, optim=torch.optim.Adam, optims_args=None, loss_fns=None, init_params=False):
-        super().__init__(models, optim, optims_args, loss_fns, init_params)
+    def __init__(self, generator, discriminator, experiment, optim=torch.optim.Adam, optims_args=None, loss_fns=None,
+                 init_params=False):
+        super().__init__(generator, discriminator, optim, optims_args, loss_fns, init_params)
         self.args = experiment
 
     def generator_step(self, batch, generator, discriminator, optimizer_g):
