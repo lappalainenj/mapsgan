@@ -57,15 +57,26 @@ class Visualization(Evaluation):
         pass
 
     def trajectories(self, output, scenes = [2]):
+        """
 
+        Args:
+            output: a dictionary that contains the output of Solver.test
+            scenes: a list of integer(s).
+                    if it is a single integer then that many random scenes are shown,
+                    if list of integers then the scenes that were indicated by the list are shown
+
+        Returns: subplots of random or selected scenes containing
+                 input trajectories as filled large dots
+                 predicted trajectories as x
+                 ground truth as small dots
+
+        """
         if len(scenes) > 1:
             scenes_list = scenes
             num_scenes = len(scenes)
         else:
             num_scenes = scenes[0]
             scenes_list = np.random.randint(len(output['xy_in']), size=num_scenes)
-
-
 
         figsize = [10, 10*num_scenes]
         fig = self.plot.init_figure(figsize)
@@ -84,10 +95,6 @@ class Visualization(Evaluation):
                 ax.plot( output['xy_pred'][s][:, a, 0], output['xy_pred'][s][:, a, 1], 'x', c=color[a], markersize=10)
             ax.set_title(s)
         plt.show()
-
-
-
-
 
 
 
