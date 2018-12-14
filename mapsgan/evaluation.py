@@ -70,7 +70,7 @@ class Visualization(Evaluation):
         """
         fig = self.plot.init_figure(figsize)
         for s in range(num_scenes):
-            num_agents = output[s][0](0,:,0).shape[1]
+            num_agents = output[s][0][0,:,0].shape[1]
             color = iter(cm.tab10())
             ax = self.plot.init_subplot(type, tot_tup=(num_agents,1), sp_tup=(s, 0))
             for a in range(num_agents):

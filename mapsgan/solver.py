@@ -96,6 +96,8 @@ class BaseSolver:
         generator.eval()
         out = []
         for batch in loader:
+            if cuda:
+                batch = {key: tensor.cuda() for key, tensor in batch.items()}
             xy_in = batch['xy_in']
             xy_out = batch['xy_out']
             dxdy_in = batch['dxdy_in']
@@ -105,11 +107,11 @@ class BaseSolver:
             for seq in seq_start_end:
                 start, end = seq
                 if return_gt:
-                    out.append((xy_out[:, start:end].numpy(),
-                                xy_pred[:, start:end].detach().numpy()))
+                    out.append((xy_out[:, start:end].cpu().numpy(),
+                                xy_pred[:, start:end].cpu().detach().numpy()))
                 else:
-                    out.append((xy_in[:, start:end].numpy(),
-                                xy_pred[:, start:end].detach().numpy()))
+                    out.append((xy_in[:, start:end].cpu().numpy(),
+                                xy_pred[:, start:end].cpu().detach().numpy()))
         return out
 
     def _reset_histories(self):
