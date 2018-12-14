@@ -1,5 +1,6 @@
 from matplotlib import pyplot as plt
 import seaborn as sns
+import numpy as np
 from matplotlib.pyplot import cm
 
 class Evaluation:
@@ -32,7 +33,6 @@ class PlotProps:
                      ttl_fs=15, ttl_pos='center'):
 
         ax = plt.subplot2grid(tot_tup, sp_tup, colspan, rowspan, sharex=sharex, sharey=sharey)
-
         ax.set_title(title, fontsize=ttl_fs, loc=ttl_pos)
 
         plt.xlabel(xlabel, fontsize=15)
@@ -56,28 +56,35 @@ class Visualization(Evaluation):
     def __init__(self):
         pass
 
-    def trajectories(self, output, figsize = [16, 4], num_scenes = 70):
-        """
+    def trajectories(self, output, scenes = [2]):
 
-        Args:
-            output: 2D list of 3D matrices [scenes][in/out](time steps, agents in scene, x/y)
-            figsize: size of the matplotlib figure
-            num_scenes: max num scenes
+        if len(scenes) > 1:
+            scenes_list = scenes
+            num_scenes = len(scenes)
+        else:
+            num_scenes = scenes[0]
+            scenes_list = np.random.randint(len(output['xy_in']), size=num_scenes)
 
-        Returns:
 
-        todo: check with real output, plot on the scene?
-        """
+
+        figsize = [10, 10*num_scenes]
         fig = self.plot.init_figure(figsize)
-        for s in range(num_scenes):
-            num_agents = output[s][0][0,:,0].shape[1]
-            color = iter(cm.tab10())
-            ax = self.plot.init_subplot(type, tot_tup=(num_agents,1), sp_tup=(s, 0))
+
+        for i, s in enumerate(scenes_list):
+            num_agents = output['xy_in'][s].shape[1]
+
+            color = ['b', 'orange', 'g', 'r', 'purple', 'k']
+            ax = self.plot.init_subplot(type, tot_tup=(num_scenes,1), sp_tup=(i, 0))
+            ax.set_xlim([0, 14])
+            ax.set_ylim([0, 14])
+
             for a in range(num_agents):
-                c = next(color)
-                ax.plot( output[s][0][:, a, 0], output[s][0][:, a, 1], 'o', c=c )
-                ax.plot( output[s][1][:, a, 0], output[s][1][:, a, 1], 'o', c=c )
+                ax.plot( output['xy_in'][s][:, a, 0], output['xy_in'][s][:, a, 1], 'o', c=color[a], markersize=10 )
+                ax.plot( output['xy_out'][s][:, a, 0], output['xy_out'][s][:, a, 1], '.', c=color[a], markersize=10 )
+                ax.plot( output['xy_pred'][s][:, a, 0], output['xy_pred'][s][:, a, 1], 'x', c=color[a], markersize=10)
+            ax.set_title(s)
         plt.show()
+
 
 
 
