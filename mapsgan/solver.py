@@ -2,11 +2,16 @@ import random
 import torch
 from torch import nn
 import numpy as np
+import time
+import os
+from pathlib import Path
 from mapsgan.utils import get_dtypes, relative_to_abs, init_weights
 from mapsgan.losses import l2_loss as loss_fn_l2
+from mapsgan import ToyGenerator
 
 long_dtype, dtype = get_dtypes()  # dtype is either torch.FloatTensor or torch.cuda.FloatTensor
 cuda = torch.cuda.is_available()
+root_path = Path(os.path.realpath(__file__)).parent.parent # basefolder of mapsgan git
 
 
 class BaseSolver:
@@ -32,11 +37,11 @@ class BaseSolver:
                  init_params=False):
         self.generator = generator
         self.discriminator = discriminator
-        models = [self.generator, self.discriminator]
+        self.models = [self.generator, self.discriminator]
         if init_params:
-            [model.apply(init_weights) for model in models]
+            [model.apply(init_weights) for model in self.models]
         if cuda:
-            [model.cuda() for model in models]
+            [model.cuda() for model in self.models]
         self.optim = optim
         self.optims_args = optims_args
         if optims_args:
@@ -49,7 +54,7 @@ class BaseSolver:
             self.loss_fns = {'norm': nn.L1Loss, 'gan': nn.BCEWithLogitsLoss}  # default
         self._reset_histories()
 
-    def train(self, loader, epochs, checkpoint_every=1, steps={'generator': 1, 'discriminator': 1}):
+    def train(self, loader, epochs, checkpoint_every=1, steps={'generator': 1, 'discriminator': 1}, save_model=False):
         """Trains the GAN.
 
         Args:
@@ -57,6 +62,7 @@ class BaseSolver:
             epochs (int): Number of epochs.
             checkpoint_every (int): Determines for which epochs a checkpoint is created.
             steps (dict): Steps to take on the same batch for generator and discriminator.
+            save_model (bool): whether to save the model at the end of training
 
         Important: Keep generic to suit all Solvers.
         """
@@ -85,14 +91,29 @@ class BaseSolver:
 
             epochs -= 1
 
-    def test(self, loader, return_gt=False):
+        # end of training operations
+        if save_model:
+            self.model_str = 'models/' + time.strftime("%Y%m%d-%H%M%S") # save as time (dont overwrite others)
+            self.model_path = root_path / self.model_str
+            torch.save(generator.state_dict(), self.model_path)
+
+
+    def test(self, loader, load_model_from='', model_class=ToyGenerator(in_len=8, out_len=12)):
         """Tests the generator on unseen data.
 
         Args:
             loader: Dataloader.
-            return_gt: If True, return tuple of (groundtruth, prediction) for each scene instead of (input, prediction).
+            load_model_from (string or PosixPath): indicates path if a saved model is tested
         """
-        generator = self.generator
+        if len(str(load_model_from))>0:
+            generator = model_class
+            generator.load_state_dict(torch.load(load_model_from))
+        else:
+            generator = self.generator
+
+        if cuda:
+            generator.cuda()
+
         generator.eval()
         out = {'xy_in': [], 'xy_out': [], 'xy_pred': []}
         for batch in loader:
@@ -145,6 +166,7 @@ class BaseSolver:
         for type, loss in self.train_loss_history['discriminator'].items():
             msg += f'{type}: {loss[-1]:.3f}\t'
         print(msg)
+
 
 
 class Solver(BaseSolver):
