@@ -4,4 +4,5 @@ __pycache__
 */.ipynb_checkpoints/
 */__pycache__/
 .idea/
-examples/How*
+examples/How
+models/
