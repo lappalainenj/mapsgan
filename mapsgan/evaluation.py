@@ -1,4 +1,5 @@
 from matplotlib import pyplot as plt
+import matplotlib.lines as mlines
 import seaborn as sns
 import numpy as np
 from matplotlib.pyplot import cm
@@ -78,22 +79,45 @@ class Visualization(Evaluation):
             num_scenes = scenes[0]
             scenes_list = np.random.randint(len(output['xy_in']), size=num_scenes)
 
-        figsize = [10, 10*num_scenes]
-        fig = self.plot.init_figure(figsize)
+        gridwidth = int(np.ceil(np.sqrt(num_scenes)))
+        gridheight = gridwidth if gridwidth * (gridwidth - 1) < num_scenes else (gridwidth - 1)
+        figsize = [5*gridwidth, 5*gridheight]
 
+
+        sns.set_context('poster')
+        fig = self.plot.init_figure(figsize)
+        max_a = 0
         for i, s in enumerate(scenes_list):
             num_agents = output['xy_in'][s].shape[1]
+            max_a = max(max_a,num_agents)
 
             color = ['b', 'orange', 'g', 'r', 'purple', 'k']
-            ax = self.plot.init_subplot(type, tot_tup=(num_scenes,1), sp_tup=(i, 0))
+            ax = self.plot.init_subplot(type, tot_tup=(gridheight, gridwidth), sp_tup=(int(i // gridwidth), int(i % gridwidth)))
             ax.set_xlim([0, 14])
             ax.set_ylim([0, 14])
 
+
+
             for a in range(num_agents):
-                ax.plot( output['xy_in'][s][:, a, 0], output['xy_in'][s][:, a, 1], 'o', c=color[a], markersize=10 )
-                ax.plot( output['xy_out'][s][:, a, 0], output['xy_out'][s][:, a, 1], '.', c=color[a], markersize=10 )
-                ax.plot( output['xy_pred'][s][:, a, 0], output['xy_pred'][s][:, a, 1], 'x', c=color[a], markersize=10)
+                ax.plot( output['xy_in'][s][:, a, 0], output['xy_in'][s][:, a, 1],
+                         'o', c=color[a], markersize=10, label=f'Input Agent {a}')
+                ax.plot( output['xy_out'][s][:, a, 0], output['xy_out'][s][:, a, 1],
+                         '.', c=color[a], markersize=10, label=f'Output Agent {a}')
+                ax.plot( output['xy_pred'][s][:, a, 0], output['xy_pred'][s][:, a, 1],
+                         'x', c=color[a], markersize=10,  label=f'Prediction Agent {a}')
+
             ax.set_title(s)
+        lines = []
+        labels = []
+        for a in range(max_a):
+            lines.append(mlines.Line2D([], [], color=color[a], marker='o', c=color[a],
+                                      markersize=10, label=f'Input Agent {a+1}'))
+            lines.append(mlines.Line2D([], [], color=color[a], marker='.', c=color[a],
+                                  markersize=10, label=f'Groundtruth Agent {a+1}'))
+            lines.append(mlines.Line2D([], [], color=color[a], marker='x', c=color[a],
+                                  markersize=10, label=f'Prediction Agent {a+1}'))
+
+        fig.legend(handles=lines, loc=(0.6, 0.055))
         plt.show()
 
 

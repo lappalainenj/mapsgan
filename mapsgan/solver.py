@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 from mapsgan.utils import get_dtypes, relative_to_abs, init_weights
 from mapsgan.losses import l2_loss as loss_fn_l2
-from mapsgan import ToyGenerator
+#from mapsgan import ToyGenerator
 
 long_dtype, dtype = get_dtypes()  # dtype is either torch.FloatTensor or torch.cuda.FloatTensor
 cuda = torch.cuda.is_available()
@@ -98,19 +98,13 @@ class BaseSolver:
             torch.save(generator.state_dict(), self.model_path)
 
 
-    def test(self, loader, load_model_from='', model_class=ToyGenerator(in_len=8, out_len=12)):
+    def test(self, loader):
         """Tests the generator on unseen data.
 
         Args:
             loader: Dataloader.
-            load_model_from (string or PosixPath): indicates path if a saved model is tested
         """
-        if len(str(load_model_from))>0:
-            generator = model_class
-            generator.load_state_dict(torch.load(load_model_from))
-        else:
-            generator = self.generator
-
+        generator = self.generator
         if cuda:
             generator.cuda()
 
@@ -166,6 +160,9 @@ class BaseSolver:
         for type, loss in self.train_loss_history['discriminator'].items():
             msg += f'{type}: {loss[-1]:.3f}\t'
         print(msg)
+
+    def load_generator(self, model_file):
+        self.generator.load_state_dict(torch.load(str(model_file)))
 
 
 
