@@ -106,10 +106,10 @@ class BaseSolver:
                 start, end = seq
                 if return_gt:
                     out.append((xy_out[:, start:end].numpy(),
-                                xy_pred[:, start:end].detach().numpy()))
+                                xy_pred[:, start:end].cpu().detach().numpy()))
                 else:
                     out.append((xy_in[:, start:end].numpy(),
-                                xy_pred[:, start:end].detach().numpy()))
+                                xy_pred[:, start:end].cpu().detach().numpy()))
         return out
 
     def _reset_histories(self):
