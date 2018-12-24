@@ -8,6 +8,21 @@ class Evaluation:
     """This class contains evaluation metrics."""
     NotImplemented
 
+    def norm_sequence(self, seq):
+        return NotImplemented
+
+    def cosine_distance(self, seq):
+        return NotImplemented
+
+    def cosine_score(self, scenes):
+        return NotImplemented
+
+    def knot_sequence(self, seq):
+        return NotImplemented
+
+    def knot_score(self, scenes):
+        return NotImplemented
+
 
 class PlotProps:
     colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728',
@@ -83,8 +98,12 @@ class Visualization(Evaluation):
         gridheight = gridwidth if gridwidth * (gridwidth - 1) < num_scenes else (gridwidth - 1)
         figsize = [5*gridwidth, 5*gridheight]
 
+        ymin = np.min([np.min(seq[:, :, 1]) for scene in output.values() for seq in scene]) - 0.1
+        ymax = np.max([np.max(seq[:, :, 1]) for scene in output.values() for seq in scene]) + 0.1
+        xmin = np.min([np.min(seq[:, :, 0]) for scene in output.values() for seq in scene]) - 0.1
+        xmax = np.max([np.max(seq[:, :, 0]) for scene in output.values() for seq in scene]) + 0.1
 
-        sns.set_context('poster')
+        # sns.set_context('poster')
         fig = self.plot.init_figure(figsize)
         max_a = 0
         for i, s in enumerate(scenes_list):
@@ -93,22 +112,19 @@ class Visualization(Evaluation):
 
             color = ['b', 'orange', 'g', 'r', 'purple', 'k']
             ax = self.plot.init_subplot(type, tot_tup=(gridheight, gridwidth), sp_tup=(int(i // gridwidth), int(i % gridwidth)))
-            ax.set_xlim([0, 14])
-            ax.set_ylim([0, 14])
-
-
+            ax.set_xlim([xmin, xmax])
+            ax.set_ylim([ymin, ymax])
 
             for a in range(num_agents):
                 ax.plot( output['xy_in'][s][:, a, 0], output['xy_in'][s][:, a, 1],
-                         'o', c=color[a], markersize=10, label=f'Input Agent {a}')
+                         'o-', c=color[a], markersize=5, label=f'Input Agent {a}')
                 ax.plot( output['xy_out'][s][:, a, 0], output['xy_out'][s][:, a, 1],
-                         '.', c=color[a], markersize=10, label=f'Output Agent {a}')
+                         '.-', c=color[a], markersize=5, label=f'Output Agent {a}')
                 ax.plot( output['xy_pred'][s][:, a, 0], output['xy_pred'][s][:, a, 1],
-                         'x', c=color[a], markersize=10,  label=f'Prediction Agent {a}')
+                         'x-', c=color[a], markersize=5,  label=f'Prediction Agent {a}')
 
             ax.set_title(s)
         lines = []
-        labels = []
         for a in range(max_a):
             lines.append(mlines.Line2D([], [], color=color[a], marker='o', c=color[a],
                                       markersize=10, label=f'Input Agent {a+1}'))
@@ -119,8 +135,6 @@ class Visualization(Evaluation):
 
         fig.legend(handles=lines, loc=(0.6, 0.055))
         plt.show()
-
-
 
     def loss(self, loss_history, types = None, figsize = [16, 4], figtitle = ''):
         """Plot losses.
@@ -143,7 +157,7 @@ class Visualization(Evaluation):
             ax = self.plot.init_subplot(type, tot_tup=(1, num_axes), sp_tup=(0, i))
             ax.plot(loss)
             ax.set_xlabel('Checkpoints')
-            ax.set_yticks([])
+            #ax.set_yticks([])
             if i == 0:
                 ax.set_ylabel('Loss (a.u.)')
         if figtitle:

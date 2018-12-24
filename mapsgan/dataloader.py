@@ -169,6 +169,29 @@ def poly_fit(traj, traj_len, threshold):
     else:
         return 0.0
 
+def norm_sequence(seq):
+    """Normalizes a seq of shape (seq_len, num_agents, num_coords)
+    per trajectory.
+    """
+    eps = 1e-10
+    normed = np.zeros_like(seq)
+    seq = seq.transpose((1, 0, 2))
+    for i, s in enumerate(seq):
+        normed[:, i, :] = (s - s.min(axis=0)) / (s.max(axis=0) - s.min(axis=0) + eps)
+    return normed
+
+
+def norm_scene(scene):
+    """Normalize all sequences within a scene.
+
+    Args:
+        scene (list): List of sequences of shape expected by norm_sequence.
+    """
+    normed = []
+    for seq in scene:
+        normed.append(norm_sequence(seq))
+    return normed
+
 
 class TrajectoryDataset(Dataset):
     """Dataloder for the Trajectory datasets
@@ -184,8 +207,8 @@ class TrajectoryDataset(Dataset):
 
     TODO: Add distances.
     """
-    def __init__(self, data_dir, obs_len=8, pred_len=12, skip=1, threshold=0.002,
-                 min_ped=1, delim='\t'):
+    def __init__(self, data_dir, obs_len=8, pred_len=12, normalize = True, skip=1, threshold=0.002, min_ped=1,
+                 delim='\t'):
 
         super(TrajectoryDataset, self).__init__()
 
@@ -200,7 +223,6 @@ class TrajectoryDataset(Dataset):
         all_files = [os.path.join(self.data_dir, _path) for _path in all_files]
         num_peds_in_seq = []
         seq_list = []
-        seq_list_rel = []
         loss_mask_list = []
         non_linear_ped = []
         for path in all_files:
@@ -209,37 +231,27 @@ class TrajectoryDataset(Dataset):
             frame_data = []
             for frame in frames:
                 frame_data.append(data[frame == data[:, 0], :])
-            num_sequences = int(
-                math.ceil((len(frames) - self.seq_len + 1) / skip))
+            num_sequences = int(math.ceil((len(frames) - self.seq_len + 1) / skip))
 
             for idx in range(0, num_sequences * self.skip + 1, skip):
                 curr_seq_data = np.concatenate(
                     frame_data[idx:idx + self.seq_len], axis=0)
                 peds_in_curr_seq = np.unique(curr_seq_data[:, 1])
-                curr_seq_rel = np.zeros((len(peds_in_curr_seq), 2,
-                                         self.seq_len))
                 curr_seq = np.zeros((len(peds_in_curr_seq), 2, self.seq_len))
                 curr_loss_mask = np.zeros((len(peds_in_curr_seq),
                                            self.seq_len))
                 num_peds_considered = 0
                 _non_linear_ped = []
                 for _, ped_id in enumerate(peds_in_curr_seq):
-                    curr_ped_seq = curr_seq_data[curr_seq_data[:, 1] ==
-                                                 ped_id, :]
+                    curr_ped_seq = curr_seq_data[curr_seq_data[:, 1] == ped_id, :]
                     curr_ped_seq = np.around(curr_ped_seq, decimals=4)
                     pad_front = frames.index(curr_ped_seq[0, 0]) - idx
                     pad_end = frames.index(curr_ped_seq[-1, 0]) - idx + 1
                     if pad_end - pad_front != self.seq_len:
                         continue
                     curr_ped_seq = np.transpose(curr_ped_seq[:, 2:])
-                    curr_ped_seq = curr_ped_seq
-                    # Make coordinates relative
-                    rel_curr_ped_seq = np.zeros(curr_ped_seq.shape)
-                    rel_curr_ped_seq[:, 1:] = \
-                        curr_ped_seq[:, 1:] - curr_ped_seq[:, :-1]
                     _idx = num_peds_considered
                     curr_seq[_idx, :, pad_front:pad_end] = curr_ped_seq
-                    curr_seq_rel[_idx, :, pad_front:pad_end] = rel_curr_ped_seq
                     # Linear vs Non-Linear Trajectory
                     _non_linear_ped.append(
                         poly_fit(curr_ped_seq, pred_len, threshold))
@@ -250,24 +262,23 @@ class TrajectoryDataset(Dataset):
                     non_linear_ped += _non_linear_ped
                     num_peds_in_seq.append(num_peds_considered)
                     loss_mask_list.append(curr_loss_mask[:num_peds_considered])
-                    seq_list.append(curr_seq[:num_peds_considered])
-                    seq_list_rel.append(curr_seq_rel[:num_peds_considered])
+                    curr_seq = curr_seq[:num_peds_considered]
+                    if normalize:
+                        curr_seq = norm_sequence(curr_seq)
+                    seq_list.append(curr_seq)
 
         self.num_seq = len(seq_list)
         seq_list = np.concatenate(seq_list, axis=0)
-        seq_list_rel = np.concatenate(seq_list_rel, axis=0)
+        seq_list = torch.from_numpy(seq_list).type(torch.float)
         loss_mask_list = np.concatenate(loss_mask_list, axis=0)
         non_linear_ped = np.asarray(non_linear_ped)
 
         # Convert numpy -> Torch Tensor
-        self.obs_traj = torch.from_numpy(
-            seq_list[:, :, :self.obs_len]).type(torch.float)
-        self.pred_traj = torch.from_numpy(
-            seq_list[:, :, self.obs_len:]).type(torch.float)
-        self.obs_traj_rel = torch.from_numpy(
-            seq_list_rel[:, :, :self.obs_len]).type(torch.float)
-        self.pred_traj_rel = torch.from_numpy(
-            seq_list_rel[:, :, self.obs_len:]).type(torch.float)
+        self.obs_traj = seq_list[:, :, :self.obs_len].contiguous()
+        self.pred_traj = seq_list[:, :, self.obs_len:].contiguous()
+        displ = displacement(seq_list)
+        self.obs_traj_rel = displ[:, :, :self.obs_len].contiguous()
+        self.pred_traj_rel = displ[:, :, self.obs_len:].contiguous()
         self.loss_mask = torch.from_numpy(loss_mask_list).type(torch.float)
         self.non_linear_ped = torch.from_numpy(non_linear_ped).type(torch.float)
         cum_start_idx = [0] + np.cumsum(num_peds_in_seq).tolist()
@@ -282,6 +293,66 @@ class TrajectoryDataset(Dataset):
                 self.obs_traj_rel[start:end, :], self.pred_traj_rel[start:end, :],
                 self.non_linear_ped[start:end], self.loss_mask[start:end, :])
 
+def displacement(seq):
+    """Calculates displacement as in sgan.
+
+    Args:
+        seq (tensor): Tensor of shape (num_agents, num_coords, seq_len)
+
+    Returns:
+        tensor: Tensor with displacements of the same shape as seq.
+    """
+    disp = torch.zeros_like(seq).type(torch.float)
+    for i, s in enumerate(seq):
+        disp[i, :, 1:] = s[:, 1:] - s[:, :-1]
+    return disp
+
+def norm_trajectories(seq):
+    """Normalizes all trajectories in a sequence independently using
+    min-max normalization.
+
+    Args:
+        seq (tensor): Tensor of shape (num_agents, num_coords, seq_len)
+
+    Returns:
+        tensor: Tensor with normalized coordinates of the same shape as seq.
+    """
+    eps = 1e-10
+    seq = torch.Tensor(seq)
+    normed = torch.zeros_like(seq)
+    for i, s in enumerate(seq):
+        normed[i] = (s - s.min(dim=1, keepdim=True)[0]) / \
+                    (s.max(dim=1, keepdim=True)[0] - s.min(dim=1, keepdim=True)[0] + eps)
+    return normed
+
+def norm_sequence(seq):
+    """Normalizes all correlated sequences using min-max normalization.
+
+    Args:
+        seq (tensor): Tensor of shape (num_agents, num_coords, seq_len)
+
+    Returns:
+        tensor: Tensor with normalized coordinates of the same shape as seq.
+    """
+    eps = 1e-10
+    seq = torch.Tensor(seq)
+    normed = torch.zeros_like(seq)
+    seq_min = seq.min(dim=0, keepdim=True)[0].min(dim=2, keepdim=True)[0]
+    seq_max = seq.max(dim=0, keepdim=True)[0].max(dim=2, keepdim=True)[0]
+    for i, s in enumerate(seq):
+        normed[i] = (s - seq_min) / (seq_max - seq_min + eps)
+    return normed
+
+def norm_scene(scene):
+    """Normalize all sequences within a scene.
+
+    Args:
+        scene (list): List of sequences of shape expected by norm_sequence.
+    """
+    normed = []
+    for seq in scene:
+        normed.append(norm_sequence(seq))
+    return normed
 
 def seq_collate(data):
     """Merges a sample-list of length batchsize (specified in data_loader).
@@ -321,14 +392,15 @@ def seq_collate(data):
     return out
 
 
-def data_loader(in_len, out_len, batch_size, num_workers, path):
+def data_loader(in_len, out_len, batch_size, num_workers, path, shuffle, normalize):
     dset = TrajectoryDataset(path,
                              obs_len=in_len,
-                             pred_len=out_len)
+                             pred_len=out_len,
+                             normalize=normalize)
 
     loader = DataLoader(dset,
                         batch_size=batch_size,
-                        shuffle=True,
+                        shuffle=shuffle,
                         num_workers=num_workers,
                         collate_fn=seq_collate)
     return dset, loader
