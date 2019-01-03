@@ -207,8 +207,7 @@ class TrajectoryDataset(Dataset):
 
     TODO: Add distances.
     """
-    def __init__(self, data_dir, obs_len=8, pred_len=12, normalize = True, skip=1, threshold=0.002, min_ped=1,
-                 delim='\t'):
+    def __init__(self, data_dir, obs_len=8, pred_len=12, skip=1, threshold=0.002, min_ped=1, delim='\t'):
 
         super(TrajectoryDataset, self).__init__()
 
@@ -263,8 +262,6 @@ class TrajectoryDataset(Dataset):
                     num_peds_in_seq.append(num_peds_considered)
                     loss_mask_list.append(curr_loss_mask[:num_peds_considered])
                     curr_seq = curr_seq[:num_peds_considered]
-                    if normalize:
-                        curr_seq = norm_sequence(curr_seq)
                     seq_list.append(curr_seq)
 
         self.num_seq = len(seq_list)
@@ -293,6 +290,7 @@ class TrajectoryDataset(Dataset):
                 self.obs_traj_rel[start:end, :], self.pred_traj_rel[start:end, :],
                 self.non_linear_ped[start:end], self.loss_mask[start:end, :])
 
+
 def displacement(seq):
     """Calculates displacement as in sgan.
 
@@ -307,41 +305,6 @@ def displacement(seq):
         disp[i, :, 1:] = s[:, 1:] - s[:, :-1]
     return disp
 
-def norm_trajectories(seq):
-    """Normalizes all trajectories in a sequence independently using
-    min-max normalization.
-
-    Args:
-        seq (tensor): Tensor of shape (num_agents, num_coords, seq_len)
-
-    Returns:
-        tensor: Tensor with normalized coordinates of the same shape as seq.
-    """
-    eps = 1e-10
-    seq = torch.Tensor(seq)
-    normed = torch.zeros_like(seq)
-    for i, s in enumerate(seq):
-        normed[i] = (s - s.min(dim=1, keepdim=True)[0]) / \
-                    (s.max(dim=1, keepdim=True)[0] - s.min(dim=1, keepdim=True)[0] + eps)
-    return normed
-
-def norm_sequence(seq):
-    """Normalizes all correlated sequences using min-max normalization.
-
-    Args:
-        seq (tensor): Tensor of shape (num_agents, num_coords, seq_len)
-
-    Returns:
-        tensor: Tensor with normalized coordinates of the same shape as seq.
-    """
-    eps = 1e-10
-    seq = torch.Tensor(seq)
-    normed = torch.zeros_like(seq)
-    seq_min = seq.min(dim=0, keepdim=True)[0].min(dim=2, keepdim=True)[0]
-    seq_max = seq.max(dim=0, keepdim=True)[0].max(dim=2, keepdim=True)[0]
-    for i, s in enumerate(seq):
-        normed[i] = (s - seq_min) / (seq_max - seq_min + eps)
-    return normed
 
 def norm_scene(scene):
     """Normalize all sequences within a scene.
@@ -353,6 +316,7 @@ def norm_scene(scene):
     for seq in scene:
         normed.append(norm_sequence(seq))
     return normed
+
 
 def seq_collate(data):
     """Merges a sample-list of length batchsize (specified in data_loader).
@@ -392,11 +356,10 @@ def seq_collate(data):
     return out
 
 
-def data_loader(in_len, out_len, batch_size, num_workers, path, shuffle, normalize):
+def data_loader(in_len, out_len, batch_size, num_workers, path, shuffle=True):
     dset = TrajectoryDataset(path,
                              obs_len=in_len,
-                             pred_len=out_len,
-                             normalize=normalize)
+                             pred_len=out_len)
 
     loader = DataLoader(dset,
                         batch_size=batch_size,

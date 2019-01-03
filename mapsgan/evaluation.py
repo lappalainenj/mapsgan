@@ -8,8 +8,67 @@ class Evaluation:
     """This class contains evaluation metrics."""
     NotImplemented
 
-    def norm_sequence(self, seq):
-        return NotImplemented
+    def norm_trajectories(seq):
+        """Normalizes all trajectories in a sequence independently using
+        min-max normalization.
+
+        Args:
+            seq (tensor): Tensor of shape (num_agents, num_coords, seq_len)
+
+        Returns:
+            tensor: Tensor with normalized coordinates of the same shape as seq.
+        """
+        eps = 1e-10
+        seq = torch.Tensor(seq)
+        normed = torch.zeros_like(seq)
+        for i, s in enumerate(seq):
+            normed[i] = (s - s.min(dim=1, keepdim=True)[0]) / \
+                        (s.max(dim=1, keepdim=True)[0] - s.min(dim=1, keepdim=True)[0] + eps)
+        return normed
+
+    def norm_sequence(seq):
+        """Normalizes all correlated sequences using min-max normalization.
+
+        Args:
+            seq (tensor): Tensor of shape (num_agents, num_coords, seq_len)
+
+        Returns:
+            tensor: Tensor with normalized coordinates of the same shape as seq.
+        """
+        eps = 1e-10
+        seq = torch.Tensor(seq)
+        normed = torch.zeros_like(seq)
+        seq_min = seq.min(dim=0, keepdim=True)[0].min(dim=2, keepdim=True)[0]
+        seq_max = seq.max(dim=0, keepdim=True)[0].max(dim=2, keepdim=True)[0]
+        for i, s in enumerate(seq):
+            normed[i] = (s - seq_min) / (seq_max - seq_min + eps)
+        return normed
+
+    def cos_sequence(seq):
+        """Computes the cosine distance of seq of shape (seq_len, num_agents, num_coords)
+        per trajectory.
+        """
+        cos = nn.CosineSimilarity(dim=0)
+        eps = 1e-10
+        num_agents = seq.shape[1]
+        distance = torch.zeros([num_agents, num_agents])
+        seq = seq.transpose(1, 0)
+        ind = np.triu_indices(num_agents, k=1)
+        for i, s1 in enumerate(seq):
+            for j, s2 in enumerate(seq):
+                distance[i, j] = 1 - cos(s1.flatten(), s2.flatten())
+        return distance[ind]
+
+    def cos_scene(scene):
+        """Summed cosine distance for all sequences within a scene.
+
+        Args:
+            scene (list): List of sequences of shape expected by cos_sequence.
+        """
+        distances = []
+        for seq in scene:
+            distances.append(cos_sequence(seq).sum())
+        return sum(distances)
 
     def cosine_distance(self, seq):
         return NotImplemented

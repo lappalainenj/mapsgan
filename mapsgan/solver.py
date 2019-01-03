@@ -384,3 +384,12 @@ class SGANSolver(BaseSolver):
         optimizer_d.step()
 
         return gan_loss_fake.item(), gan_loss_real.item(), loss.item()
+
+class BicycleSolver(BaseSolver):
+    NotImplemented
+
+class cLRSolver(BaseSolver):
+    NotImplemented
+
+class cVAESolver(BaseSolver):
+    NotImplemented

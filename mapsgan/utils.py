@@ -45,6 +45,7 @@ def get_noise(shape, noise_type):
         tensor
 
     """
+    dtype = get_dtypes()[1]
     if noise_type == 'gaussian':
         return torch.randn(*shape).type(dtype)
     elif noise_type == 'uniform':
