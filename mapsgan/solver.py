@@ -53,7 +53,29 @@ class BaseSolver:
             self.loss_fns = {'norm': nn.L1Loss, 'gan': nn.BCEWithLogitsLoss}  # default
         self._reset_histories()
 
-    def train(self, loader, epochs, checkpoint_every=1, steps={'generator': 1, 'discriminator': 1}, save_model=False):
+    def save_checkpoint(self, trained_epochs, generator, discriminator, optimizer_g, optimizer_d):
+        checkpoint = { 'epochs':trained_epochs,
+                       'g_state':generator.state_dict(),
+                       'd_state':discriminator.state_dict(),
+                       'g_optim_state':optimizer_g.state_dict(),
+                       'd_optim_state':optimizer_d.state_dict()  }
+        self.model_str = 'models/' + time.strftime("%Y%m%d-%H%M%S")  # save as time (dont overwrite others)
+        self.model_path = root_path / self.model_str
+        torch.save(checkpoint, self.model_path)
+        print('Training state saved to:\n' + str(self.model_path))
+
+    def load_checkpoint(self, model_path, generator, discriminator, optimizer_g, optimizer_d):
+        print('Restoring from checkpoint')
+        checkpoint = torch.load(model_path)
+        generator.load_state_dict(checkpoint['g_state'])
+        discriminator.load_state_dict(checkpoint['d_state'])
+        optimizer_g.load_state_dict(checkpoint['g_optim_state'])
+        optimizer_d.load_state_dict(checkpoint['d_optim_state'])
+        total_epochs = checkpoint['epochs']
+        return generator, discriminator, optimizer_g, optimizer_d, total_epochs
+
+    def train(self, loader, epochs, checkpoint_every=1, steps={'generator': 1, 'discriminator': 1},
+              save_model=False, restore_checkpoint_from=None):
         """Trains the GAN.
 
         Args:
@@ -62,6 +84,7 @@ class BaseSolver:
             checkpoint_every (int): Determines for which epochs a checkpoint is created.
             steps (dict): Steps to take on the same batch for generator and discriminator.
             save_model (bool): whether to save the model at the end of training
+            restore_checkpoint_from (str): the path to load the model and optimizer states from to continue training
 
         Important: Keep generic to suit all Solvers.
         """
@@ -71,6 +94,15 @@ class BaseSolver:
         discriminator.train()
         optimizer_g = self.optim(generator.parameters(), **self.optims_args['generator'])
         optimizer_d = self.optim(discriminator.parameters(), **self.optims_args['discriminator'])
+
+        if restore_checkpoint_from is not None and os.path.isfile(restore_checkpoint_from):
+            [generator, discriminator, optimizer_g, optimizer_d, prev_epochs] = \
+                self.load_checkpoint(restore_checkpoint_from, generator, discriminator, optimizer_g, optimizer_d)
+            trained_epochs = epochs + prev_epochs
+            print('Checkpoint restored')
+        else:
+            trained_epochs = epochs
+            print('Training new model')
 
         while epochs:
             gsteps = steps['generator']
@@ -92,17 +124,21 @@ class BaseSolver:
 
         # end of training operations
         if save_model:
-            self.model_str = 'models/' + time.strftime("%Y%m%d-%H%M%S") # save as time (dont overwrite others)
-            self.model_path = root_path / self.model_str
-            torch.save(generator.state_dict(), self.model_path)
+            self.save_checkpoint(trained_epochs, generator, discriminator, optimizer_g, optimizer_d)
 
-    def test(self, loader):
+
+    def test(self, loader, load_checkpoint_from=None):
         """Tests the generator on unseen data.
 
         Args:
             loader: Dataloader.
+            load_checkpoint_from (str): path to saved model
         """
         generator = self.generator
+        if load_checkpoint_from is not None and os.path.isfile(load_checkpoint_from):
+            print('Loading from checkpoint')
+            checkpoint = torch.load(load_checkpoint_from)
+            generator.load_state_dict(checkpoint['g_state'])
         if cuda:
             generator.cuda()
 
@@ -158,9 +194,6 @@ class BaseSolver:
         for type, loss in self.train_loss_history['discriminator'].items():
             msg += f'{type}: {loss[-1]:.3f}\t'
         print(msg)
-
-    def load_generator(self, model_file):
-        self.generator.load_state_dict(torch.load(str(model_file)))
 
 
 class Solver(BaseSolver):
