@@ -433,6 +433,7 @@ class cLRSolver(Solver):
     """Implements a generator and a discriminator step for the conditional latent regressor model.
 
     See BaseSolver for detailed docstring.
+    # TODO: Either make generic somehow to work with sgan too or implement an sgan version.
     """
 
     def __init__(self, generator, discriminator, optim=torch.optim.Adam, optims_args=None,
@@ -484,6 +485,7 @@ class cVAESolver(Solver):
     """Implements a generator and a discriminator step for the conditional latent regressor model.
 
     See BaseSolver for detailed docstring.
+    # TODO: Either make generic somehow to work with sgan too or implement an sgan version.
     """
 
     def __init__(self, generator, discriminator, optim=torch.optim.Adam, optims_args=None,
