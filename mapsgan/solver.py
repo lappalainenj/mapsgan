@@ -140,7 +140,7 @@ class BaseSolver:
             self.generator.load_state_dict(checkpoint['g_state'])
 
         if cuda:
-            generator.cuda()
+            self.generator.cuda()
 
         self.generator.eval()
         out = {'xy_in': [], 'xy_out': [], 'xy_pred': []}
