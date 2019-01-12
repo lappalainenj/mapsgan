@@ -3,6 +3,12 @@ import random
 
 bce_loss = torch.nn.BCEWithLogitsLoss()
 
+def kl_loss(mu, logvar):
+    """Kullback Leiber Divergence, adapted from Bycicle Gan Code.
+
+    Note: Can be derived analytically from two gaussian distributions."""
+    return -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+
 def gan_g_loss(scores_fake):
     """Computes the BCE Loss for the generator, given the scores from the Discriminator.
 
