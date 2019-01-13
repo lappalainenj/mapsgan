@@ -387,10 +387,8 @@ class BicycleGenerator(nn.Module):
 
     def forward(self, xy_in, dxdy_in, seq_start_end, xy_out=None):
         if self.mode == 'clr':
-            print('clr')
             return self.clr_forward(xy_in, dxdy_in, seq_start_end)
         elif self.mode == 'cvae':
-            print('cvae')
             return self.cvae_forward(xy_in, dxdy_in, seq_start_end, xy_out)
         elif self.mode == 'eval':
             return self.generator(xy_in, dxdy_in, seq_start_end)
