@@ -1,0 +1,13 @@
+Some commands for gcloud
+
+initialize:
+gcloud init
+
+connect to VM:
+gcloud compute ssh mapsgancloud
+
+copy file from local to cloud
+gcloud scp [dir here] mapsgancloud:[dir there]
+
+copy folder from local to cloud
+gcloud scp --recurse [dir here] mapsgancloud:[dir there]

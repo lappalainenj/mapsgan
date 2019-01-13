@@ -26,7 +26,7 @@ solver = cVAESolver(generator, discriminator,
 
 print('Starting training...')
 time_start = time.time()
-solver.train(trainloader, epochs = 1, checkpoint_every=200, steps={'generator': 1, 'discriminator': 1},
+solver.train(trainloader, epochs = 10000, checkpoint_every=200, steps={'generator': 1, 'discriminator': 1},
               save_model=True, model_name='/cloud/cvae_1', save_every=1000, restore_checkpoint_from=None)
 time_elapsed = (time.time() - time_start)/60
 print('End of training. Duration: ' + str(time_elapsed))
