@@ -235,7 +235,7 @@ class ToyGenerator(nn.Module):
             decoder_h = torch.cat(_list, dim=0)
             return decoder_h
 
-        decoder_h = torch.cat([encoded, z_decoder], dim=1)
+        decoder_h = torch.cat([encoded, z_decoder.type(dtype)], dim=1)
 
         return decoder_h
 
