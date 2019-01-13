@@ -1,8 +1,6 @@
 .ipynb_checkpoints/
-data/
 __pycache__
 */.ipynb_checkpoints/
 */__pycache__/
 .idea/
-examples/How
-models/
+examples/How*
