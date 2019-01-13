@@ -511,13 +511,14 @@ class cVAESolver(Solver):
         if cuda:
             batch = {key: tensor.cuda() for key, tensor in batch.items()}
         xy_in = batch['xy_in']
+        xy_out = batch['xy_out']
         dxdy_out = batch['dxdy_out']
         dxdy_in = batch['dxdy_in']
         seq_start_end = batch['seq_start_end']
 
         loss_fn_gan = self.loss_fns['gan']()
         loss_fn_norm = self.loss_fns['norm']()
-        dxdy_pred = generator(xy_in, dxdy_in, seq_start_end)
+        dxdy_pred = generator(xy_in, dxdy_in, seq_start_end, xy_out)
         xy_pred = relative_to_abs(dxdy_pred, xy_in[-1])
         xy_fake = torch.cat([xy_in, xy_pred], dim=0)
         scores_fake = discriminator(xy_fake, seq_start_end)
@@ -533,6 +534,51 @@ class cVAESolver(Solver):
         optimizer_g.step()
 
         return gan_loss.item(), norm_loss.item(), loss.item()
+
+    def discriminator_step(self, batch, generator, discriminator, optimizer_d):
+        """Discriminator optimization step.
+
+        Args:
+            batch: Batch from the data loader.
+            generator: Generator module.
+            discriminator: Discriminator module.
+            optimizer_d: Discriminator optimizer.
+
+        Returns:
+            discriminator loss on fake
+            discriminator loss on real
+            total discriminator loss
+        """
+        if cuda:
+            batch = {key: tensor.cuda() for key, tensor in batch.items()}
+        xy_in = batch['xy_in']
+        xy_out = batch['xy_out']
+        dxdy_in = batch['dxdy_in']
+        seq_start_end = batch['seq_start_end']
+        loss_fn_gan = self.loss_fns['gan']()
+
+        dxdy_pred = generator(xy_in, dxdy_in, seq_start_end, xy_out)
+        xy_pred = relative_to_abs(dxdy_pred, xy_in[-1])
+
+        xy_fake = torch.cat([xy_in, xy_pred], dim=0)
+        xy_real = torch.cat([xy_in, xy_out], dim=0)
+
+        scores_fake = discriminator(xy_fake, seq_start_end)
+        scores_real = discriminator(xy_real, seq_start_end)
+
+        target_real = torch.ones_like(scores_real).type(dtype) * random.uniform(0.7, 1.2)
+        target_fake = torch.zeros_like(scores_fake).type(dtype) * random.uniform(0., 0.3)
+
+        gan_loss_real = loss_fn_gan(scores_real, target_real)
+        gan_loss_fake = loss_fn_gan(scores_fake, target_fake)
+
+        loss = gan_loss_fake + gan_loss_real
+        optimizer_d.zero_grad()
+        loss.backward()
+        optimizer_d.step()
+
+        return gan_loss_fake.item(), gan_loss_real.item(), loss.item()
+
 
 
 class BicycleSolver(BaseSolver):
