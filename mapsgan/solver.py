@@ -54,13 +54,14 @@ class BaseSolver:
             self.loss_fns = {'norm': nn.L1Loss, 'gan': nn.BCEWithLogitsLoss}  # default TODO: Add KL-DIV from utils
         self._reset_histories()
 
-    def save_checkpoint(self, trained_epochs, optimizer_g, optimizer_d):
+    def save_checkpoint(self, trained_epochs, optimizer_g, optimizer_d, model_name):
         checkpoint = { 'epochs':trained_epochs,
                        'g_state':self.generator.state_dict(),
                        'd_state':self.discriminator.state_dict(),
                        'g_optim_state':optimizer_g.state_dict(),
-                       'd_optim_state':optimizer_d.state_dict()  }
-        self.model_str = 'models/' + time.strftime("%Y%m%d-%H%M%S")  # save as time (dont overwrite others)
+                       'd_optim_state':optimizer_d.state_dict(),
+                       'train_loss_history':self.train_loss_history }
+        self.model_str = 'models/' + model_name +'_'+ time.strftime("%Y%m%d-%H%M%S")  + '_epoch_' + str(trained_epochs)
         self.model_path = root_path / self.model_str
         torch.save(checkpoint, self.model_path)
         print('Training state saved to:\n' + str(self.model_path))
@@ -72,11 +73,12 @@ class BaseSolver:
         self.discriminator.load_state_dict(checkpoint['d_state'])
         optimizer_g.load_state_dict(checkpoint['g_optim_state'])
         optimizer_d.load_state_dict(checkpoint['d_optim_state'])
+        self.train_loss_history = checkpoint['train_loss_history']
         total_epochs = checkpoint['epochs']
         return optimizer_g, optimizer_d, total_epochs
 
     def train(self, loader, epochs, checkpoint_every=1, steps={'generator': 1, 'discriminator': 1},
-              save_model=False, restore_checkpoint_from=None):
+              save_model=False, model_name='', save_every=1000, restore_checkpoint_from=None):
         """Trains the GAN.
 
         Args:
@@ -120,11 +122,14 @@ class BaseSolver:
                 self._checkpoint(losses_g, losses_d)
                 self._pprint(epochs)
 
+            if epochs % save_every == 0:
+                self.save_checkpoint(trained_epochs, optimizer_g, optimizer_d, model_name)
+
             epochs -= 1
 
         # end of training operations
         if save_model:
-            self.save_checkpoint(trained_epochs, optimizer_g, optimizer_d)
+            self.save_checkpoint(trained_epochs, optimizer_g, optimizer_d, model_name)
 
 
     def test(self, loader, load_checkpoint_from=None):
