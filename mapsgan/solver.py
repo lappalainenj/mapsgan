@@ -97,10 +97,10 @@ class BaseSolver:
         if restore_checkpoint_from is not None and os.path.isfile(restore_checkpoint_from):
             [optimizer_g, optimizer_d, prev_epochs] = \
                 self.load_checkpoint(restore_checkpoint_from, optimizer_g, optimizer_d)
-            trained_epochs = epochs + prev_epochs
+            trained_epochs = prev_epochs
             print('Checkpoint restored')
         else:
-            trained_epochs = epochs
+            trained_epochs = 0
             print('Training new model')
 
         self.generator.train()
@@ -122,6 +122,7 @@ class BaseSolver:
                 self._checkpoint(losses_g, losses_d)
                 self._pprint(epochs)
 
+            trained_epochs += 1
             if epochs % save_every == 0:
                 self.save_checkpoint(trained_epochs, optimizer_g, optimizer_d, model_name)
 
