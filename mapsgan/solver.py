@@ -70,7 +70,10 @@ class BaseSolver:
 
     def load_checkpoint(self, model_path):
         print('Restoring from checkpoint')
-        checkpoint = torch.load(model_path)
+        if not cuda:
+            checkpoint = torch.load(model_path, map_location='cpu')
+        else:
+            checkpoint = torch.load(model_path)
         self.generator.load_state_dict(checkpoint['g_state'])
         self.discriminator.load_state_dict(checkpoint['d_state'])
         self.optimizer_g.load_state_dict(checkpoint['g_optim_state'])
