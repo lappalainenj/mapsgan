@@ -5,6 +5,11 @@ import mapsgan.experiments as experiments
 import time
 
 
+mode = 'cvae'
+fileprefix = '/cloud/cvae_1'
+lr_gen = 1e-3
+lr_dis = 1e-3
+
 if torch.cuda.is_available():
     print('Cuda is available')
 else:
@@ -16,17 +21,17 @@ dataset, trainloader = data_loader(in_len=8, out_len=12, batch_size=64, num_work
                                   shuffle=True)
 
 print('Setting models...')
-generator = BicycleGenerator(generator=ToyGenerator, start_mode='cvae')
+generator = BicycleGenerator(generator=ToyGenerator, start_mode=mode)
 discriminator = ToyDiscriminator()
 print('Mode: ' + generator.mode)
 
 solver = cVAESolver(generator, discriminator,
                 loss_fns={'norm': nn.L1Loss, 'gan': nn.BCEWithLogitsLoss},
-                optims_args={'generator': {'lr': 1e-3}, 'discriminator': {'lr': 1e-3}})
+                optims_args={'generator': {'lr': lr_gen}, 'discriminator': {'lr': lr_dis}})
 
 print('Starting training...')
 time_start = time.time()
 solver.train(trainloader, epochs = 10000, checkpoint_every=100, steps={'generator': 1, 'discriminator': 1},
-              save_model=True, model_name='/cloud/cvae_1', save_every=500, restore_checkpoint_from=None)
+              save_model=True, model_name=fileprefix, save_every=500, restore_checkpoint_from=None)
 time_elapsed = (time.time() - time_start)/60
 print('End of training. Duration: ' + str(time_elapsed))

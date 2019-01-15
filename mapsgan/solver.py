@@ -48,34 +48,39 @@ class BaseSolver:
             self.optims_args = optims_args
         else:
             self.optims_args = {'generator': {'lr': 1e-3}, 'discriminator': {'lr': 1e-3}}  # default
+        self.optimizer_g = self.optim(self.generator.parameters(), **self.optims_args['generator'])
+        self.optimizer_d = self.optim(self.discriminator.parameters(), **self.optims_args['discriminator'])
         if loss_fns:
             self.loss_fns = loss_fns
         else:
             self.loss_fns = {'norm': nn.L1Loss, 'gan': nn.BCEWithLogitsLoss}  # default TODO: Add KL-DIV from utils
         self._reset_histories()
 
-    def save_checkpoint(self, trained_epochs, optimizer_g, optimizer_d, model_name):
+    def save_checkpoint(self, trained_epochs, model_name):
         checkpoint = { 'epochs':trained_epochs,
                        'g_state':self.generator.state_dict(),
                        'd_state':self.discriminator.state_dict(),
-                       'g_optim_state':optimizer_g.state_dict(),
-                       'd_optim_state':optimizer_d.state_dict(),
+                       'g_optim_state':self.optimizer_g.state_dict(),
+                       'd_optim_state':self.optimizer_d.state_dict(),
                        'train_loss_history':self.train_loss_history }
         self.model_str = 'models/' + model_name +'_'+ time.strftime("%Y%m%d-%H%M%S")  + '_epoch_' + str(trained_epochs)
         self.model_path = root_path / self.model_str
         torch.save(checkpoint, self.model_path)
         print('Training state saved to:\n' + str(self.model_path))
 
-    def load_checkpoint(self, model_path, optimizer_g, optimizer_d):
+    def load_checkpoint(self, model_path):
         print('Restoring from checkpoint')
-        checkpoint = torch.load(model_path)
+        if not cuda:
+            checkpoint = torch.load(model_path, map_location='cpu')
+        else:
+            checkpoint = torch.load(model_path)
         self.generator.load_state_dict(checkpoint['g_state'])
         self.discriminator.load_state_dict(checkpoint['d_state'])
-        optimizer_g.load_state_dict(checkpoint['g_optim_state'])
-        optimizer_d.load_state_dict(checkpoint['d_optim_state'])
+        self.optimizer_g.load_state_dict(checkpoint['g_optim_state'])
+        self.optimizer_d.load_state_dict(checkpoint['d_optim_state'])
         self.train_loss_history = checkpoint['train_loss_history']
         total_epochs = checkpoint['epochs']
-        return optimizer_g, optimizer_d, total_epochs
+        return total_epochs
 
     def train(self, loader, epochs, checkpoint_every=1, steps={'generator': 1, 'discriminator': 1},
               save_model=False, model_name='', save_every=1000, restore_checkpoint_from=None):
@@ -91,11 +96,9 @@ class BaseSolver:
 
         Important: Keep generic to suit all Solvers.
         """
-        optimizer_g = self.optim(self.generator.parameters(), **self.optims_args['generator'])
-        optimizer_d = self.optim(self.discriminator.parameters(), **self.optims_args['discriminator'])
 
         if restore_checkpoint_from is not None and os.path.isfile(restore_checkpoint_from):
-            [optimizer_g, optimizer_d, prev_epochs] = \
+            [prev_epochs] = \
                 self.load_checkpoint(restore_checkpoint_from, optimizer_g, optimizer_d)
             trained_epochs = prev_epochs
             print('Checkpoint restored')
@@ -112,10 +115,10 @@ class BaseSolver:
             for batch in loader:
 
                 while dsteps:
-                    losses_d = self.discriminator_step(batch, self.generator, self.discriminator, optimizer_d)
+                    losses_d = self.discriminator_step(batch, self.generator, self.discriminator, self.optimizer_d)
                     dsteps -= 1
                 while gsteps:
-                    losses_g = self.generator_step(batch, self.generator, self.discriminator, optimizer_g)
+                    losses_g = self.generator_step(batch, self.generator, self.discriminator, self.optimizer_g)
                     gsteps -= 1
 
             if epochs % checkpoint_every == 0:
@@ -123,14 +126,14 @@ class BaseSolver:
                 self._pprint(epochs)
 
             trained_epochs += 1
-            if epochs % save_every == 0:
-                self.save_checkpoint(trained_epochs, optimizer_g, optimizer_d, model_name)
+            if (epochs % save_every == 0) & save_model:
+                self.save_checkpoint(trained_epochs, model_name)
 
             epochs -= 1
 
         # end of training operations
         if save_model:
-            self.save_checkpoint(trained_epochs, optimizer_g, optimizer_d, model_name)
+            self.save_checkpoint(trained_epochs, model_name)
 
 
     def test(self, loader, load_checkpoint_from=None):
@@ -142,7 +145,10 @@ class BaseSolver:
         """
         if load_checkpoint_from is not None and os.path.isfile(load_checkpoint_from):
             print('Loading from checkpoint')
-            checkpoint = torch.load(load_checkpoint_from)
+            if not cuda:
+                checkpoint = torch.load(load_checkpoint_from, map_location='cpu')
+            else:
+                checkpoint = torch.load(load_checkpoint_from)
             self.generator.load_state_dict(checkpoint['g_state'])
 
         if cuda:
