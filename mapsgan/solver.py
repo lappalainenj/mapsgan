@@ -142,7 +142,10 @@ class BaseSolver:
         """
         if load_checkpoint_from is not None and os.path.isfile(load_checkpoint_from):
             print('Loading from checkpoint')
-            checkpoint = torch.load(load_checkpoint_from)
+            if not cuda:
+                checkpoint = torch.load(load_checkpoint_from, map_location='cpu')
+            else:
+                checkpoint = torch.load(load_checkpoint_from)
             self.generator.load_state_dict(checkpoint['g_state'])
 
         if cuda:
