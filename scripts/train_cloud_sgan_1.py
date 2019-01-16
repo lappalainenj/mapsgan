@@ -9,8 +9,8 @@ import time
 
 mode = 'sgan'
 fileprefix = '/cloud/sgan_1'
-lr_gen = 1e-2
-lr_dis = 1e-2
+lr_gen = 1e-3
+lr_dis = 1e-3
 
 if torch.cuda.is_available():
     print('Cuda is available')
@@ -20,7 +20,9 @@ else:
 print('Loading dataset...')
 experiment = experiments.ETH() # we store filepaths and arguments in here
 experiment.init_default_args() # those are some default SGAN parameters used in SGANSolver
-dataset, trainloader = data_loader(in_len=8, out_len=12, batch_size=64, num_workers=1, path=experiment.train_dir)
+print(experiment.best_k)
+#experiment.k_best =
+dataset, trainloader = data_loader(in_len=8, out_len=12, batch_size=4, num_workers=1, path=experiment.train_dir)
 
 print('Setting models...')
 generator = TrajectoryGenerator(obs_len=8,
