@@ -54,7 +54,8 @@ class BaseSolver:
             self.loss_fns = loss_fns
         else:
             self.loss_fns = {'norm': nn.L1Loss, 'gan': nn.BCEWithLogitsLoss}  # default TODO: Add KL-DIV from utils
-        self._reset_histories()
+        self.train_loss_history = {'generator': {'G_BCE': [], 'G_L1': []},
+                                   'discriminator': {'D_Real': [], 'D_Fake': []}}
 
     def save_checkpoint(self, trained_epochs, model_name):
         checkpoint = { 'epochs':trained_epochs,
@@ -99,7 +100,7 @@ class BaseSolver:
 
         if restore_checkpoint_from is not None and os.path.isfile(restore_checkpoint_from):
             [prev_epochs] = \
-                self.load_checkpoint(restore_checkpoint_from, optimizer_g, optimizer_d)
+                self.load_checkpoint(restore_checkpoint_from)
             trained_epochs = prev_epochs
             print('Checkpoint restored')
         else:
@@ -172,14 +173,6 @@ class BaseSolver:
                 out['xy_pred'].append(xy_pred[:, start:end].cpu().detach().numpy())
         return out
 
-    def _reset_histories(self):
-        self.train_loss_history = {'generator': {'G_gan': [], 'G_norm': [], 'G_total': []},
-                                   'discriminator': {'D_real': [], 'D_fake': [], 'D_total': []}}
-        self.train_acc_history = {}
-        self.test_loss_history = {'generator': [], 'discriminator': []}
-        self.test_acc_history = {}
-        self.best_acc = 0
-
     def _checkpoint(self, losses_g, losses_d):
         """Checkpoint during training.
 
@@ -191,12 +184,23 @@ class BaseSolver:
             save states and models to the hard drive.
         TODO: Implement a mechanism that saves the models whenever accuracy increased.
         """
-        self.train_loss_history['generator']['G_gan'].append(losses_g[0])
-        self.train_loss_history['generator']['G_norm'].append(losses_g[1])
-        self.train_loss_history['generator']['G_total'].append(losses_g[2])
-        self.train_loss_history['discriminator']['D_fake'].append(losses_d[0])
-        self.train_loss_history['discriminator']['D_real'].append(losses_d[1])
-        self.train_loss_history['discriminator']['D_total'].append(losses_d[2])
+        if hasattr(self.generator, 'mode'):
+            if self.generator.mode == 'clr':
+                self.train_loss_history['clr']['generator']['G_BCE'].append(losses_g[0])
+                self.train_loss_history['clr']['generator']['G_L1'].append(losses_g[1])
+                self.train_loss_history['clr']['discriminator']['D_Fake'].append(losses_d[0])
+                self.train_loss_history['clr']['discriminator']['D_Real'].append(losses_d[1])
+            elif self.generator.mode == 'cvae':
+                self.train_loss_history['cvae']['generator']['G_BCE'].append(losses_g[0])
+                self.train_loss_history['cvae']['generator']['G_L1'].append(losses_g[1])
+                self.train_loss_history['cvae']['generator']['G_KL'].append(losses_g[2])
+                self.train_loss_history['cvae']['discriminator']['D_Fake'].append(losses_d[0])
+                self.train_loss_history['cvae']['discriminator']['D_Real'].append(losses_d[1])
+        else:
+            self.train_loss_history['generator']['G_BCE'].append(losses_g[0])
+            self.train_loss_history['generator']['G_L1'].append(losses_g[1])
+            self.train_loss_history['discriminator']['D_Fake'].append(losses_d[0])
+            self.train_loss_history['discriminator']['D_Real'].append(losses_d[1])
 
     def _pprint(self, epochs, init=False):
         """Pretty prints the losses."""
@@ -266,7 +270,7 @@ class Solver(BaseSolver):
         loss.backward()
         optimizer_g.step()
 
-        return gan_loss.item(), norm_loss.item(), loss.item()
+        return gan_loss.item(), norm_loss.item()
 
     def discriminator_step(self, batch, generator, discriminator, optimizer_d):
         """Discriminator optimization step.
@@ -310,7 +314,7 @@ class Solver(BaseSolver):
         loss.backward()
         optimizer_d.step()
 
-        return gan_loss_fake.item(), gan_loss_real.item(), loss.item()
+        return gan_loss_fake.item(), gan_loss_real.item()
 
 
 class SGANSolver(BaseSolver):
@@ -386,7 +390,7 @@ class SGANSolver(BaseSolver):
             nn.utils.clip_grad_norm_(generator.parameters(), self.args.clip)
         optimizer_g.step()
 
-        return gan_loss.item(), l2_loss.item(), loss.item()
+        return gan_loss.item(), l2_loss.item()
 
     def discriminator_step(self, batch, generator, discriminator, optimizer_d):
         """Discriminator optimization step.
@@ -438,7 +442,7 @@ class SGANSolver(BaseSolver):
             nn.utils.clip_grad_norm_(discriminator.parameters(), self.args.clip)
         optimizer_d.step()
 
-        return gan_loss_fake.item(), gan_loss_real.item(), loss.item()
+        return gan_loss_fake.item(), gan_loss_real.item()
 
 
 class cLRSolver(Solver):
@@ -453,6 +457,8 @@ class cLRSolver(Solver):
         super().__init__(generator, discriminator, optim, optims_args, loss_fns, init_params)
         generator.clr()
         self.lambda_z = lambda_z
+        self.train_loss_history = {'clr': {'generator': {'G_BCE': [], 'G_L1': []},
+                                           'discriminator': {'D Real': [], 'D_Fake': []}}}
 
     def generator_step(self, batch, generator, discriminator, optimizer_g):
         """Generator optimization step.
@@ -491,7 +497,10 @@ class cLRSolver(Solver):
         loss.backward()
         optimizer_g.step()
 
-        return gan_loss.item(), norm_loss.item(), loss.item()
+        return gan_loss.item(), norm_loss.item()
+
+
+
 
 class cVAESolver(Solver):
     """Implements a generator and a discriminator step for the conditional latent regressor model.
@@ -505,6 +514,8 @@ class cVAESolver(Solver):
         super().__init__(generator, discriminator, optim, optims_args, loss_fns, init_params)
         generator.cvae()
         self.lambda_kl = lambda_kl
+        self.train_loss_history = {'cvae': {'generator': {'G_BCE': [], 'G_L1': [], 'G_KL': []},
+                                            'discriminator': {'D Real': [], 'D_Fake': []}}}
 
     def generator_step(self, batch, generator, discriminator, optimizer_g):
         """Generator optimization step.
@@ -545,7 +556,7 @@ class cVAESolver(Solver):
         loss.backward()
         optimizer_g.step()
 
-        return gan_loss.item(), norm_loss.item(), loss.item()
+        return gan_loss.item(), norm_loss.item(), kl_loss.item()
 
     def discriminator_step(self, batch, generator, discriminator, optimizer_d):
         """Discriminator optimization step.
@@ -589,9 +600,38 @@ class cVAESolver(Solver):
         loss.backward()
         optimizer_d.step()
 
-        return gan_loss_fake.item(), gan_loss_real.item(), loss.item()
-
-
+        return gan_loss_fake.item(), gan_loss_real.item()
 
 class BicycleSolver(BaseSolver):
-    NotImplemented
+
+    def __init__(self, generator, discriminator, clrsolver, cvaesolver, optim=torch.optim.Adam, optims_args=None,
+                 lambda_kl=1, lambda_z=1, loss_fns=None, init_params=False):
+        super().__init__(generator, discriminator, optim, optims_args, loss_fns, init_params)
+
+        self.lambda_kl = lambda_kl
+        self.lambda_z = lambda_z
+        self.clrsolver = clrsolver
+        self.cvaesolver = cvaesolver
+        self.train_loss_history = {'clr': {'generator': {'G_BCE': [], 'G_L1': []},
+                                           'discriminator': {'D Real': [], 'D_Fake': []}},
+                                   'cvae': {'generator': {'G_BCE': [], 'G_L1': [], 'G_KL': []},
+                                           'discriminator': {'D Real': [], 'D_Fake': []}} }
+
+    def generator_step(self, batch, generator, discriminator, optimizer_g):
+
+        if generator.mode == 'clr':
+            self.clrsolver.generator_step(batch, generator, discriminator, optimizer_g)
+            generator.cvae()
+        elif generator.mode == 'cvae':
+            self.cvaesolver.generator_step(batch, generator, discriminator, optimizer_g)
+            generator.clr()
+        else:
+            raise AssertionError('Mode must be either clr or cvae.')
+
+    def discriminator_step(self, batch, generator, discriminator, optimizer_d):
+        if generator.mode == 'clr':
+            self.clrsolver.discriminator_step(batch, generator, discriminator, optimizer_d)
+        elif generator.mode == 'cvae':
+            self.cvaesolver.discriminator_step(batch, generator, discriminator, optimizer_d)
+        else:
+            raise AssertionError('Mode must be either clr or cvae.')
