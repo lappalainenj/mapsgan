@@ -111,7 +111,8 @@ class BaseSolver:
 
         self.generator.train()
         self.discriminator.train()
-        self._pprint(epochs, init=True)
+        if print_every:
+            self._pprint(epochs, init=True)
         while epochs:
             gsteps = steps['generator']
             dsteps = steps['discriminator']
@@ -469,7 +470,7 @@ class cLRSolver(Solver):
         generator.clr()
         self.lambda_z = lambda_z
         self.train_loss_history = {'clr': {'generator': {'G_BCE': [], 'G_L1': []},
-                                           'discriminator': {'D Real': [], 'D_Fake': []}}}
+                                           'discriminator': {'D_Real': [], 'D_Fake': []}}}
 
     def generator_step(self, batch, generator, discriminator, optimizer_g):
         """Generator optimization step.
@@ -526,7 +527,7 @@ class cVAESolver(Solver):
         generator.cvae()
         self.lambda_kl = lambda_kl
         self.train_loss_history = {'cvae': {'generator': {'G_BCE': [], 'G_L1': [], 'G_KL': []},
-                                            'discriminator': {'D Real': [], 'D_Fake': []}}}
+                                            'discriminator': {'D_Real': [], 'D_Fake': []}}}
 
     def generator_step(self, batch, generator, discriminator, optimizer_g):
         """Generator optimization step.
