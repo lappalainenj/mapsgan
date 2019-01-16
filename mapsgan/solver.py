@@ -48,8 +48,8 @@ class BaseSolver:
             self.optims_args = optims_args
         else:
             self.optims_args = {'generator': {'lr': 1e-3}, 'discriminator': {'lr': 1e-3}}  # default
-        self.optimizer_g = self.optim(self.generator.parameters(), **self.optims_args['generator'])
-        self.optimizer_d = self.optim(self.discriminator.parameters(), **self.optims_args['discriminator'])
+        self.optimizer_g = None
+        self.optimizer_d = None
         if loss_fns:
             self.loss_fns = loss_fns
         else:
@@ -83,7 +83,7 @@ class BaseSolver:
         total_epochs = checkpoint['epochs']
         return total_epochs
 
-    def train(self, loader, epochs, checkpoint_every=1, steps={'generator': 1, 'discriminator': 1},
+    def train(self, loader, epochs, checkpoint_every=1, print_every=False, steps={'generator': 1, 'discriminator': 1},
               save_model=False, model_name='', save_every=1000, restore_checkpoint_from=None):
         """Trains the GAN.
 
@@ -106,6 +106,8 @@ class BaseSolver:
         else:
             trained_epochs = 0
             print('Training new model')
+            self.optimizer_g = self.optim(self.generator.parameters(), **self.optims_args['generator'])
+            self.optimizer_d = self.optim(self.discriminator.parameters(), **self.optims_args['discriminator'])
 
         self.generator.train()
         self.discriminator.train()
@@ -124,6 +126,8 @@ class BaseSolver:
 
             if epochs % checkpoint_every == 0:
                 self._checkpoint(losses_g, losses_d)
+
+            if print_every and (epochs % print_every == 0):
                 self._pprint(epochs)
 
             trained_epochs += 1
@@ -204,20 +208,27 @@ class BaseSolver:
 
     def _pprint(self, epochs, init=False):
         """Pretty prints the losses."""
+        if hasattr(self.generator, 'mode'):
+            if self.generator.mode == 'clr':
+                loss_history = self.train_loss_history['clr']
+            if self.generator.mode == 'cvae':
+                loss_history = self.train_loss_history['cvae']
+        else:
+            loss_history = self.train_loss_history
         if init:
             msg = f"\n{'Generator Losses':>23}"
-            msg += 'Discriminator Losses'.rjust(len(self.train_loss_history['generator'])*10+4)
+            msg += 'Discriminator Losses'.rjust(len(loss_history['generator'])*10+4)
             msg += '\nEpochs '
-            for type in self.train_loss_history['generator']:
+            for type in loss_history['generator']:
                 msg += f'{type:<10}'
-            for type in self.train_loss_history['discriminator']:
+            for type in loss_history['discriminator']:
                 msg += f'{type:<10}'
         else:
             msg = f'{epochs:<7.0f}'
-            for type, loss in self.train_loss_history['generator'].items():
+            for type, loss in loss_history['generator'].items():
                 msg += f'{loss[-1]:<10.3f}'
             msg += ''
-            for type, loss in self.train_loss_history['discriminator'].items():
+            for type, loss in loss_history['discriminator'].items():
                 msg += f'{loss[-1]:<10.3f}'
         print(msg)
 
@@ -610,28 +621,82 @@ class BicycleSolver(BaseSolver):
 
         self.lambda_kl = lambda_kl
         self.lambda_z = lambda_z
-        self.clrsolver = clrsolver
         self.cvaesolver = cvaesolver
-        self.train_loss_history = {'clr': {'generator': {'G_BCE': [], 'G_L1': []},
-                                           'discriminator': {'D Real': [], 'D_Fake': []}},
+        self.clrsolver = clrsolver
+        self.train_loss_history = {'clr': {'generator': {'G_BCE': [-1], 'G_L1': []},
+                                           'discriminator': {'D_Real': [], 'D_Fake': []}},
                                    'cvae': {'generator': {'G_BCE': [], 'G_L1': [], 'G_KL': []},
-                                           'discriminator': {'D Real': [], 'D_Fake': []}} }
+                                           'discriminator': {'D_Real': [], 'D_Fake': []}} }
 
     def generator_step(self, batch, generator, discriminator, optimizer_g):
 
         if generator.mode == 'clr':
-            self.clrsolver.generator_step(batch, generator, discriminator, optimizer_g)
+            bce_loss, norm_loss = self.clrsolver.generator_step(batch, generator, discriminator, optimizer_g)
+            losses = (bce_loss, norm_loss)
             generator.cvae()
         elif generator.mode == 'cvae':
-            self.cvaesolver.generator_step(batch, generator, discriminator, optimizer_g)
+            bce_loss, norm_loss, kl_loss = self.cvaesolver.generator_step(batch, generator, discriminator, optimizer_g)
+            losses = (bce_loss, norm_loss, kl_loss)
             generator.clr()
         else:
             raise AssertionError('Mode must be either clr or cvae.')
+        return losses
 
     def discriminator_step(self, batch, generator, discriminator, optimizer_d):
         if generator.mode == 'clr':
-            self.clrsolver.discriminator_step(batch, generator, discriminator, optimizer_d)
+            loss_fake, loss_real = self.clrsolver.discriminator_step(batch, generator, discriminator, optimizer_d)
         elif generator.mode == 'cvae':
-            self.cvaesolver.discriminator_step(batch, generator, discriminator, optimizer_d)
+            loss_fake, loss_real = self.cvaesolver.discriminator_step(batch, generator, discriminator, optimizer_d)
         else:
             raise AssertionError('Mode must be either clr or cvae.')
+        return loss_fake, loss_real
+
+    def _checkpoint(self, losses_g, losses_d):
+        """Checkpoint during training.
+
+        Args:
+            losses_g (tuple): Return of function generator_step.
+            losses_d (tuple): Return of function discriminator_step.
+
+        Note: Here we can store everything that we need for evaluation and
+            save states and models to the hard drive.
+        TODO: Implement a mechanism that saves the models whenever accuracy increased.
+        """
+        if self.generator.mode == 'cvae':
+            self.train_loss_history['clr']['generator']['G_BCE'].append(losses_g[0])
+            self.train_loss_history['clr']['generator']['G_L1'].append(losses_g[1])
+            self.train_loss_history['clr']['discriminator']['D_Fake'].append(losses_d[0])
+            self.train_loss_history['clr']['discriminator']['D_Real'].append(losses_d[1])
+        elif self.generator.mode == 'clr':
+            self.train_loss_history['cvae']['generator']['G_BCE'].append(losses_g[0])
+            self.train_loss_history['cvae']['generator']['G_L1'].append(losses_g[1])
+            self.train_loss_history['cvae']['generator']['G_KL'].append(losses_g[2])
+            self.train_loss_history['cvae']['discriminator']['D_Fake'].append(losses_d[0])
+            self.train_loss_history['cvae']['discriminator']['D_Real'].append(losses_d[1])
+
+    def _pprint(self, epochs, init=False):
+        """Pretty prints the losses."""
+        if init:
+            msg = f"\n{'Generator Losses':>23}"
+            msg += 'Discriminator Losses'.rjust(len(self.train_loss_history['cvae']['generator'])*10+4)
+            msg += '\nEpochs '
+            for type in self.train_loss_history['cvae']['generator']:
+                msg += f'{type:<10}'
+            for type in self.train_loss_history['cvae']['discriminator']:
+                msg += f'{type:<10}'
+        else:
+            msg = f'{epochs:<7.0f}'
+            for type, loss in self.train_loss_history['clr']['generator'].items():
+                msg += f'{loss[-1]:<10.3f}' if loss else ''
+            msg += ''.rjust(10)
+            for type, loss in self.train_loss_history['clr']['discriminator'].items():
+                msg += f'{loss[-1]:<10.3f}' if loss else ''
+            msg += f'\t cLR\n'
+            msg += f'{epochs:<7.0f}'
+            for type, loss in self.train_loss_history['cvae']['generator'].items():
+                msg += f'{loss[-1]:<10.3f}' if loss else ''
+            msg += ''
+            for type, loss in self.train_loss_history['cvae']['discriminator'].items():
+                msg += f'{loss[-1]:<10.3f}' if loss else ''
+            msg += f'\t cVAE'
+        print(msg)
