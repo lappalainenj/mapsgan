@@ -354,8 +354,8 @@ class BicycleEncoder(nn.Module):
 
 class BicycleGenerator(nn.Module):
 
-    def __init__(self, generator, embedding_dim=64, h_dim=64, z_dim=8, num_layers=1, dropout=0.0,
-                 start_mode='clr', in_len=8, out_len=12, noise_type='gaussian', noise_mix_type='ped', **kwargs):
+    def __init__(self, generator, start_mode, embedding_dim=64, h_dim=64, z_dim=8, num_layers=1, dropout=0.0,
+                 in_len=8, out_len=12, noise_type='gaussian', noise_mix_type='ped', **kwargs):
         super().__init__()
         noise_dim = (z_dim,) # required for sgan
         decoder_h_dim = h_dim + z_dim
