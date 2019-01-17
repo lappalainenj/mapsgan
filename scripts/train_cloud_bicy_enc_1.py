@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from mapsgan import cVAESolver, BicycleGenerator, ToyGenerator, ToyDiscriminator, data_loader
+from mapsgan import BicycleSolver, BicycleGenerator, ToyGenerator, ToyDiscriminator, data_loader
 import mapsgan.experiments as experiments
 import time
 
