@@ -77,6 +77,7 @@ class BaseSolver:
             checkpoint = torch.load(model_path)
         self.generator.load_state_dict(checkpoint['g_state'])
         self.discriminator.load_state_dict(checkpoint['d_state'])
+        self.init_optimizers()
         self.optimizer_g.load_state_dict(checkpoint['g_optim_state'])
         self.optimizer_d.load_state_dict(checkpoint['d_optim_state'])
         self.train_loss_history = checkpoint['train_loss_history']
@@ -105,9 +106,9 @@ class BaseSolver:
             print('Checkpoint restored')
         else:
             trained_epochs = 0
+            self.init_optimizers()
             print('Training new model')
-            self.optimizer_g = self.optim(self.generator.parameters(), **self.optims_args['generator'])
-            self.optimizer_d = self.optim(self.discriminator.parameters(), **self.optims_args['discriminator'])
+
 
         self.generator.train()
         self.discriminator.train()
@@ -232,6 +233,10 @@ class BaseSolver:
             for type, loss in loss_history['discriminator'].items():
                 msg += f'{loss[-1]:<10.3f}'
         print(msg)
+
+    def init_optimizers(self):
+        self.optimizer_g = self.optim(self.generator.parameters(), **self.optims_args['generator'])
+        self.optimizer_d = self.optim(self.discriminator.parameters(), **self.optims_args['discriminator'])
 
 
 class Solver(BaseSolver):
