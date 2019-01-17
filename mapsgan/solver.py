@@ -11,7 +11,7 @@ from mapsgan.losses import kl_loss as loss_fn_kl
 
 long_dtype, dtype = get_dtypes()  # dtype is either torch.FloatTensor or torch.cuda.FloatTensor
 cuda = torch.cuda.is_available()
-root_path = Path(os.path.realpath(__file__)).parent.parent # basefolder of mapsgan git
+root_path = Path(os.path.realpath(__file__)).parent.parent  # basefolder of mapsgan git
 
 
 class BaseSolver:
@@ -58,13 +58,13 @@ class BaseSolver:
                                    'discriminator': {'D_Real': [], 'D_Fake': []}}
 
     def save_checkpoint(self, trained_epochs, model_name):
-        checkpoint = { 'epochs':trained_epochs,
-                       'g_state':self.generator.state_dict(),
-                       'd_state':self.discriminator.state_dict(),
-                       'g_optim_state':self.optimizer_g.state_dict(),
-                       'd_optim_state':self.optimizer_d.state_dict(),
-                       'train_loss_history':self.train_loss_history }
-        self.model_str = 'models/' + model_name +'_'+ time.strftime("%Y%m%d-%H%M%S")  + '_epoch_' + str(trained_epochs)
+        checkpoint = {'epochs': trained_epochs,
+                      'g_state': self.generator.state_dict(),
+                      'd_state': self.discriminator.state_dict(),
+                      'g_optim_state': self.optimizer_g.state_dict(),
+                      'd_optim_state': self.optimizer_d.state_dict(),
+                      'train_loss_history': self.train_loss_history}
+        self.model_str = 'models/' + model_name + '_' + time.strftime("%Y%m%d-%H%M%S") + '_epoch_' + str(trained_epochs)
         self.model_path = root_path / self.model_str
         torch.save(checkpoint, self.model_path)
         print('Training state saved to:\n' + str(self.model_path))
@@ -97,7 +97,7 @@ class BaseSolver:
 
         Important: Keep generic to suit all Solvers.
         """
-
+        self.init=True
         if restore_checkpoint_from is not None and os.path.isfile(restore_checkpoint_from):
             [prev_epochs] = \
                 self.load_checkpoint(restore_checkpoint_from)
@@ -112,7 +112,7 @@ class BaseSolver:
         self.generator.train()
         self.discriminator.train()
         if print_every:
-            self._pprint(epochs, init=True)
+            self._pprint(epochs, init=self.init)
         while epochs:
             gsteps = steps['generator']
             dsteps = steps['discriminator']
@@ -140,7 +140,6 @@ class BaseSolver:
         # end of training operations
         if save_model:
             self.save_checkpoint(trained_epochs, model_name)
-
 
     def test(self, loader, load_checkpoint_from=None):
         """Tests the generator on unseen data.
@@ -218,7 +217,7 @@ class BaseSolver:
             loss_history = self.train_loss_history
         if init:
             msg = f"\n{'Generator Losses':>23}"
-            msg += 'Discriminator Losses'.rjust(len(loss_history['generator'])*10+4)
+            msg += 'Discriminator Losses'.rjust(len(loss_history['generator']) * 10 + 4)
             msg += '\nEpochs '
             for type in loss_history['generator']:
                 msg += f'{type:<10}'
@@ -465,7 +464,7 @@ class cLRSolver(Solver):
     """
 
     def __init__(self, generator, discriminator, optim=torch.optim.Adam, optims_args=None,
-                 lambda_z = 1, loss_fns=None, init_params=False):
+                 lambda_z=1, loss_fns=None, init_params=False):
         super().__init__(generator, discriminator, optim, optims_args, loss_fns, init_params)
         generator.clr()
         self.lambda_z = lambda_z
@@ -510,8 +509,6 @@ class cLRSolver(Solver):
         optimizer_g.step()
 
         return gan_loss.item(), norm_loss.item()
-
-
 
 
 class cVAESolver(Solver):
@@ -614,6 +611,7 @@ class cVAESolver(Solver):
 
         return gan_loss_fake.item(), gan_loss_real.item()
 
+
 class BicycleSolver(BaseSolver):
 
     def __init__(self, generator, discriminator, clrsolver, cvaesolver, optim=torch.optim.Adam, optims_args=None,
@@ -627,15 +625,21 @@ class BicycleSolver(BaseSolver):
         self.train_loss_history = {'clr': {'generator': {'G_BCE': [-1], 'G_L1': []},
                                            'discriminator': {'D_Real': [], 'D_Fake': []}},
                                    'cvae': {'generator': {'G_BCE': [], 'G_L1': [], 'G_KL': []},
-                                           'discriminator': {'D_Real': [], 'D_Fake': []}} }
+                                            'discriminator': {'D_Real': [], 'D_Fake': []}}}
 
     def generator_step(self, batch, generator, discriminator, optimizer_g):
-
+        if self.init:
+            self.optimizer_g = self.optim([{'params': generator.generator.parameters()},
+                                      {'params': generator.encoder.parameters()}],
+                                     **self.optims_args['generator'])
+            self.init=False
         if generator.mode == 'clr':
+            self.optimizer_g.param_groups[1]['lr'] = 0.
             bce_loss, norm_loss = self.clrsolver.generator_step(batch, generator, discriminator, optimizer_g)
             losses = (bce_loss, norm_loss)
             generator.cvae()
         elif generator.mode == 'cvae':
+            self.optimizer_g.param_groups[1]['lr'] = self.optimizer_g.defaults['lr']
             bce_loss, norm_loss, kl_loss = self.cvaesolver.generator_step(batch, generator, discriminator, optimizer_g)
             losses = (bce_loss, norm_loss, kl_loss)
             generator.clr()
@@ -679,7 +683,7 @@ class BicycleSolver(BaseSolver):
         """Pretty prints the losses."""
         if init:
             msg = f"\n{'Generator Losses':>23}"
-            msg += 'Discriminator Losses'.rjust(len(self.train_loss_history['cvae']['generator'])*10+4)
+            msg += 'Discriminator Losses'.rjust(len(self.train_loss_history['cvae']['generator']) * 10 + 4)
             msg += '\nEpochs '
             for type in self.train_loss_history['cvae']['generator']:
                 msg += f'{type:<10}'
