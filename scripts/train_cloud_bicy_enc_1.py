@@ -32,7 +32,7 @@ clrsolver = cLRSolver(generator, discriminator,
                 loss_fns={'norm': nn.L1Loss, 'gan': nn.BCEWithLogitsLoss},
                 optims_args={'generator': {'lr': lr_gen}, 'discriminator': {'lr': lr_dis}})
 
-solver = BicycleSolver(generator, discriminator, cvaesolver, clrsolver,
+solver = BicycleSolver(generator, discriminator, clrsolver, cvaesolver,
                 loss_fns={'norm': nn.L1Loss, 'gan': nn.BCEWithLogitsLoss},
                 optims_args={'generator': {'lr': lr_gen}, 'discriminator': {'lr': lr_dis}})
 
