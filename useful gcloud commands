@@ -1,5 +1,8 @@
 Some commands for gcloud
 
+get gcloud to your local:
+https://cloud.google.com/sdk/docs/#deb
+
 initialize:
 gcloud init
 
@@ -7,10 +10,10 @@ connect to VM:
 gcloud compute ssh mapsgancloud
 
 copy file from local to cloud
-gcloud scp [dir here] mapsgancloud:[dir there]
+gcloud compute scp [dir here] mapsgancloud:[dir there]
 
 copy folder from local to cloud
-gcloud scp --recurse [dir here] mapsgancloud:[dir there]
+gcloud compute scp --recurse [dir here] mapsgancloud:[dir there]
 
 get cuda
 https://medium.com/google-cloud/setting-up-tensorflow-gpu-on-google-cloud-instance-with-ubuntu-16-04-53cb6749b527
