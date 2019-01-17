@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from mapsgan import BicycleSolver, BicycleGenerator, ToyGenerator, ToyDiscriminator, data_loader
+from mapsgan import cVAESolver, cLRSolver, BicycleSolver, BicycleGenerator, ToyGenerator, ToyDiscriminator, data_loader
 import mapsgan.experiments as experiments
 import time
 
@@ -25,7 +25,14 @@ generator = BicycleGenerator(generator=ToyGenerator, start_mode=mode)
 discriminator = ToyDiscriminator()
 print('Start Mode: ' + generator.mode)
 
-solver = BicycleSolver(generator, discriminator,
+cvaesolver = cVAESolver(generator, discriminator,
+                loss_fns={'norm': nn.L1Loss, 'gan': nn.BCEWithLogitsLoss},
+                optims_args={'generator': {'lr': lr_gen}, 'discriminator': {'lr': lr_dis}})
+clrsolver = cLRSolver(generator, discriminator,
+                loss_fns={'norm': nn.L1Loss, 'gan': nn.BCEWithLogitsLoss},
+                optims_args={'generator': {'lr': lr_gen}, 'discriminator': {'lr': lr_dis}})
+
+solver = BicycleSolver(generator, discriminator, cvaesolver, clrsolver,
                 loss_fns={'norm': nn.L1Loss, 'gan': nn.BCEWithLogitsLoss},
                 optims_args={'generator': {'lr': lr_gen}, 'discriminator': {'lr': lr_dis}})
 
