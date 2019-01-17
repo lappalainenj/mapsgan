@@ -131,7 +131,7 @@ class Visualization(Evaluation):
     def __init__(self):
         pass
 
-    def trajectories(self, output, scenes = [2]):
+    def trajectories(self, output, scenes = [2], legend=False):
         """
 
         Args:
@@ -176,24 +176,26 @@ class Visualization(Evaluation):
 
             for a in range(num_agents):
                 ax.plot( output['xy_in'][s][:, a, 0], output['xy_in'][s][:, a, 1],
-                         'o-', c=color[a], markersize=5, label=f'Input Agent {a}')
+                         'o-', c=color[a%len(color)], markersize=5, label=f'Input Agent {a}')
                 ax.plot( output['xy_out'][s][:, a, 0], output['xy_out'][s][:, a, 1],
-                         '.-', c=color[a], markersize=5, label=f'Output Agent {a}')
+                         '.-', c=color[a%len(color)], markersize=5, label=f'Output Agent {a}')
                 ax.plot( output['xy_pred'][s][:, a, 0], output['xy_pred'][s][:, a, 1],
-                         'x-', c=color[a], markersize=5,  label=f'Prediction Agent {a}')
+                         'x-', c=color[a%len(color)], markersize=5,  label=f'Prediction Agent {a}')
 
             ax.set_title(s)
-        lines = []
-        for a in range(max_a):
-            lines.append(mlines.Line2D([], [], color=color[a], marker='o', c=color[a],
-                                      markersize=10, label=f'Input Agent {a+1}'))
-            lines.append(mlines.Line2D([], [], color=color[a], marker='.', c=color[a],
-                                  markersize=10, label=f'Groundtruth Agent {a+1}'))
-            lines.append(mlines.Line2D([], [], color=color[a], marker='x', c=color[a],
-                                  markersize=10, label=f'Prediction Agent {a+1}'))
 
-        fig.legend(handles=lines, loc=(0.6, 0.055))
-        plt.show()
+        if legend:
+            lines = []
+            for a in range(max_a):
+                lines.append(mlines.Line2D([], [], color=color[a%len(color)], marker='o', c=color[a%len(color)],
+                                          markersize=10, label=f'Input Agent {a+1}'))
+                lines.append(mlines.Line2D([], [], color=color[a%len(color)], marker='.', c=color[a%len(color)],
+                                      markersize=10, label=f'Groundtruth Agent {a+1}'))
+                lines.append(mlines.Line2D([], [], color=color[a%len(color)], marker='x', c=color[a%len(color)],
+                                      markersize=10, label=f'Prediction Agent {a+1}'))
+
+            fig.legend(handles=lines, loc=(0.6, 0.055))
+            plt.show()
 
     def loss(self, loss_history, types = None, figsize = [16, 4], figtitle = ''):
         """Plot losses.

@@ -54,11 +54,12 @@ def get_noise(shape, noise_type):
 
 
 def get_z_random(batch_size, z_dim, random_type='gauss'):
-        if random_type == 'uni':
-            z = torch.rand(batch_size, z_dim) * 2.0 - 1.0
-        elif random_type == 'gauss':
-            z = torch.randn(batch_size, z_dim)
-        return z
+    dtype = get_dtypes()[1]
+    if random_type == 'uni':
+        z = torch.rand(batch_size, z_dim) * 2.0 - 1.0
+    elif random_type == 'gauss':
+        z = torch.randn(batch_size, z_dim)
+    return z.type(dtype)
 
 
 def make_mlp(dim_list, activation='relu', batch_norm=True, dropout=0.):
