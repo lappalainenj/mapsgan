@@ -169,30 +169,6 @@ def poly_fit(traj, traj_len, threshold):
     else:
         return 0.0
 
-def norm_sequence(seq):
-    """Normalizes a seq of shape (seq_len, num_agents, num_coords)
-    per trajectory.
-    """
-    eps = 1e-10
-    normed = np.zeros_like(seq)
-    seq = seq.transpose((1, 0, 2))
-    for i, s in enumerate(seq):
-        normed[:, i, :] = (s - s.min(axis=0)) / (s.max(axis=0) - s.min(axis=0) + eps)
-    return normed
-
-
-def norm_scene(scene):
-    """Normalize all sequences within a scene.
-
-    Args:
-        scene (list): List of sequences of shape expected by norm_sequence.
-    """
-    normed = []
-    for seq in scene:
-        normed.append(norm_sequence(seq))
-    return normed
-
-
 class TrajectoryDataset(Dataset):
     """Dataloder for the Trajectory datasets
 
@@ -304,18 +280,6 @@ def displacement(seq):
     for i, s in enumerate(seq):
         disp[i, :, 1:] = s[:, 1:] - s[:, :-1]
     return disp
-
-
-def norm_scene(scene):
-    """Normalize all sequences within a scene.
-
-    Args:
-        scene (list): List of sequences of shape expected by norm_sequence.
-    """
-    normed = []
-    for seq in scene:
-        normed.append(norm_sequence(seq))
-    return normed
 
 
 def seq_collate(data):

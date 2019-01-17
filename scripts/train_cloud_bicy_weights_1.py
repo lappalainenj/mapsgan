@@ -5,7 +5,7 @@ import time
 
 
 mode = 'cvae'
-fileprefix = '/cloud/bicy_enc_1'
+fileprefix = '/cloud/bicy_weights_1'
 lr_gen = 1e-3
 lr_dis = 1e-3
 loss_weights={'disc': 1, 'traj': 2, 'kl': 0.1, 'z': 0.5}

@@ -5,7 +5,7 @@ import numpy as np
 import time
 import os
 from pathlib import Path
-from mapsgan.utils import get_dtypes, relative_to_abs, init_weights
+from mapsgan.utils import get_dtypes, relative_to_abs, init_weights, get_z_random
 from mapsgan.losses import l2_loss as loss_fn_l2
 from mapsgan.losses import kl_loss as loss_fn_kl
 
@@ -138,13 +138,14 @@ class BaseSolver:
         if save_model:
             self.save_checkpoint(trained_epochs, model_name)
 
-    def test(self, loader, load_checkpoint_from=None):
+    def test(self, loader, load_checkpoint_from=None, seed=17, z_dim=8):
         """Tests the generator on unseen data.
 
         Args:
             loader: Dataloader.
             load_checkpoint_from (str): path to saved model
         """
+        torch.manual_seed(seed)
         if load_checkpoint_from is not None and os.path.isfile(load_checkpoint_from):
             print('Loading from checkpoint')
             if not cuda:
@@ -165,7 +166,8 @@ class BaseSolver:
             xy_out = batch['xy_out']
             dxdy_in = batch['dxdy_in']
             seq_start_end = batch['seq_start_end']
-            dxdy_pred = self.generator(xy_in, dxdy_in, seq_start_end)
+            z = get_z_random(xy_in.size(1), 8)
+            dxdy_pred = self.generator(xy_in, dxdy_in, seq_start_end, user_noise=z)
             xy_pred = relative_to_abs(dxdy_pred, xy_in[-1])
             for seq in seq_start_end:
                 start, end = seq
