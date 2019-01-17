@@ -1,2 +1,2 @@
-*.ipynb
-examples/*.ipynb
+*.ipynb -diff
+examples/*.ipynb -diff

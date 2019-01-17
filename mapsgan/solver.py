@@ -34,7 +34,7 @@ class BaseSolver:
     """
 
     def __init__(self, generator, discriminator, optim=torch.optim.Adam, optims_args=None, loss_fns=None,
-                 init_params=False):
+                 loss_weights=None, init_params=False):
         self.generator = generator
         self.discriminator = discriminator
         self.models = [self.generator, self.discriminator]
@@ -43,17 +43,13 @@ class BaseSolver:
         if cuda:
             [model.cuda() for model in self.models]
         self.optim = optim
-        self.optims_args = optims_args
-        if optims_args:
-            self.optims_args = optims_args
-        else:
-            self.optims_args = {'generator': {'lr': 1e-3}, 'discriminator': {'lr': 1e-3}}  # default
+        self.optims_args = optims_args if optims_args else {'generator': {'lr': 1e-3}, 'discriminator': {'lr': 1e-3}}  # default
         self.optimizer_g = None
         self.optimizer_d = None
-        if loss_fns:
-            self.loss_fns = loss_fns
-        else:
-            self.loss_fns = {'norm': nn.L1Loss, 'gan': nn.BCEWithLogitsLoss}  # default TODO: Add KL-DIV from utils
+        self.loss_fns = loss_fns if loss_fns else {'traj': nn.L1Loss, 'disc': nn.BCEWithLogitsLoss, 'z': nn.L1Loss,
+                                                   'kl': loss_fn_kl}
+        weights = {key:1. for key in self.loss_fns}
+        self.loss_weights = loss_weights if loss_weights else weights
         self.train_loss_history = {'generator': {'G_BCE': [], 'G_L1': []},
                                    'discriminator': {'D_Real': [], 'D_Fake': []}}
 
@@ -245,8 +241,8 @@ class Solver(BaseSolver):
     """
 
     def __init__(self, generator, discriminator, optim=torch.optim.Adam, optims_args=None, loss_fns=None,
-                 init_params=False):
-        super().__init__(generator, discriminator, optim, optims_args, loss_fns, init_params)
+                 loss_weights=None, init_params=False):
+        super().__init__(generator, discriminator, optim, optims_args, loss_fns, loss_weights, init_params)
 
     def generator_step(self, batch, generator, discriminator, optimizer_g):
         """Generator optimization step.
@@ -269,8 +265,10 @@ class Solver(BaseSolver):
         dxdy_in = batch['dxdy_in']
         seq_start_end = batch['seq_start_end']
 
-        loss_fn_gan = self.loss_fns['gan']()
-        loss_fn_norm = self.loss_fns['norm']()
+        loss_fn_disc = self.loss_fns['disc']()  # discriminator loss
+        loss_fn_traj = self.loss_fns['traj']()  # comparing trajectories
+        w_disc = self.loss_weights['disc']
+        w_traj = self.loss_weights['traj']
 
         dxdy_pred = generator(xy_in, dxdy_in, seq_start_end)
         xy_pred = relative_to_abs(dxdy_pred, xy_in[-1])
@@ -278,15 +276,15 @@ class Solver(BaseSolver):
         scores_fake = discriminator(xy_fake, seq_start_end)
         target_fake = torch.ones_like(scores_fake).type(dtype) * random.uniform(0.7, 1.2)
 
-        norm_loss = loss_fn_norm(dxdy_pred, dxdy_out)  # IMPORTANT: Indeed SGAN compares displacements!
-        gan_loss = loss_fn_gan(scores_fake, target_fake)
+        traj_loss = loss_fn_traj(dxdy_pred, dxdy_out)  # IMPORTANT: Indeed SGAN compares displacements!
+        disc_loss = loss_fn_disc(scores_fake, target_fake)
 
-        loss = gan_loss + norm_loss
+        loss = w_disc * disc_loss + w_traj * traj_loss
         optimizer_g.zero_grad()
         loss.backward()
         optimizer_g.step()
 
-        return gan_loss.item(), norm_loss.item()
+        return disc_loss.item(), traj_loss.item()
 
     def discriminator_step(self, batch, generator, discriminator, optimizer_d):
         """Discriminator optimization step.
@@ -308,7 +306,7 @@ class Solver(BaseSolver):
         xy_out = batch['xy_out']
         dxdy_in = batch['dxdy_in']
         seq_start_end = batch['seq_start_end']
-        loss_fn_gan = self.loss_fns['gan']()
+        loss_fn_disc = self.loss_fns['disc']()
 
         dxdy_pred = generator(xy_in, dxdy_in, seq_start_end)
         xy_pred = relative_to_abs(dxdy_pred, xy_in[-1])
@@ -322,15 +320,15 @@ class Solver(BaseSolver):
         target_real = torch.ones_like(scores_real).type(dtype) * random.uniform(0.7, 1.2)
         target_fake = torch.zeros_like(scores_fake).type(dtype) * random.uniform(0., 0.3)
 
-        gan_loss_real = loss_fn_gan(scores_real, target_real)
-        gan_loss_fake = loss_fn_gan(scores_fake, target_fake)
+        disc_loss_real = loss_fn_disc(scores_real, target_real)
+        disc_loss_fake = loss_fn_disc(scores_fake, target_fake)
 
-        loss = gan_loss_fake + gan_loss_real
+        loss = disc_loss_fake + disc_loss_real
         optimizer_d.zero_grad()
         loss.backward()
         optimizer_d.step()
 
-        return gan_loss_fake.item(), gan_loss_real.item()
+        return disc_loss_fake.item(), disc_loss_real.item()
 
 
 class SGANSolver(BaseSolver):
@@ -342,8 +340,8 @@ class SGANSolver(BaseSolver):
     """
 
     def __init__(self, generator, discriminator, experiment, optim=torch.optim.Adam, optims_args=None, loss_fns=None,
-                 init_params=False):
-        super().__init__(generator, discriminator, optim, optims_args, loss_fns, init_params)
+                 loss_weights=None, init_params=False):
+        super().__init__(generator, discriminator, optim, optims_args, loss_fns, loss_weights, init_params)
         self.args = experiment
 
     def generator_step(self, batch, generator, discriminator, optimizer_g):
@@ -368,7 +366,8 @@ class SGANSolver(BaseSolver):
         loss_mask = batch['loss_mask'][:, self.args.in_len:]
         seq_start_end = batch['seq_start_end']
 
-        loss_fn_gan = self.loss_fns['gan']()
+        loss_fn_disc = self.loss_fns['disc']()
+        w_disc = self.loss_weights['disc']
 
         # Important: This is for their diversity loss, cp. paragraph 3.5.
         l2_losses = []
@@ -396,9 +395,9 @@ class SGANSolver(BaseSolver):
         scores_fake = discriminator(xy_fake, dxdy_fake, seq_start_end)
         target_fake = torch.ones_like(scores_fake).type(dtype) * random.uniform(0.7, 1.2)
 
-        gan_loss = loss_fn_gan(scores_fake, target_fake)
+        disc_loss = loss_fn_disc(scores_fake, target_fake)
 
-        loss = gan_loss + l2_loss
+        loss = w_disc * disc_loss + l2_loss
         optimizer_g.zero_grad()
         loss.backward()
         if self.args.clip:
@@ -406,7 +405,7 @@ class SGANSolver(BaseSolver):
             nn.utils.clip_grad_norm_(generator.parameters(), self.args.clip)
         optimizer_g.step()
 
-        return gan_loss.item(), l2_loss.item()
+        return disc_loss.item(), l2_loss.item()
 
     def discriminator_step(self, batch, generator, discriminator, optimizer_d):
         """Discriminator optimization step.
@@ -429,7 +428,7 @@ class SGANSolver(BaseSolver):
         dxdy_in = batch['dxdy_in']
         dxdy_out = batch['dxdy_out']
         seq_start_end = batch['seq_start_end']
-        loss_fn_gan = self.loss_fns['gan']()
+        loss_fn_disc = self.loss_fns['disc']()
 
         dxdy_pred = generator(xy_in, dxdy_in, seq_start_end)
         xy_pred = relative_to_abs(dxdy_pred, xy_in[-1])
@@ -446,10 +445,10 @@ class SGANSolver(BaseSolver):
         target_real = torch.ones_like(scores_real).type(dtype) * random.uniform(0.7, 1.2)
         target_fake = torch.zeros_like(scores_fake).type(dtype) * random.uniform(0., 0.3)
 
-        gan_loss_real = loss_fn_gan(scores_real, target_real)
-        gan_loss_fake = loss_fn_gan(scores_fake, target_fake)
+        disc_loss_real = loss_fn_disc(scores_real, target_real)
+        disc_loss_fake = loss_fn_disc(scores_fake, target_fake)
 
-        loss = gan_loss_fake + gan_loss_real
+        loss = disc_loss_fake + disc_loss_real
 
         optimizer_d.zero_grad()
         loss.backward()
@@ -458,7 +457,7 @@ class SGANSolver(BaseSolver):
             nn.utils.clip_grad_norm_(discriminator.parameters(), self.args.clip)
         optimizer_d.step()
 
-        return gan_loss_fake.item(), gan_loss_real.item()
+        return disc_loss_fake.item(), disc_loss_real.item()
 
 
 class cLRSolver(Solver):
@@ -469,10 +468,9 @@ class cLRSolver(Solver):
     """
 
     def __init__(self, generator, discriminator, optim=torch.optim.Adam, optims_args=None,
-                 lambda_z=1, loss_fns=None, init_params=False):
-        super().__init__(generator, discriminator, optim, optims_args, loss_fns, init_params)
+                 loss_fns=None, loss_weights=None, init_params=False):
+        super().__init__(generator, discriminator, optim, optims_args, loss_fns, loss_weights, init_params)
         generator.clr()
-        self.lambda_z = lambda_z
         self.train_loss_history = {'clr': {'generator': {'G_BCE': [], 'G_L1': []},
                                            'discriminator': {'D_Real': [], 'D_Fake': []}}}
 
@@ -497,23 +495,27 @@ class cLRSolver(Solver):
         dxdy_in = batch['dxdy_in']
         seq_start_end = batch['seq_start_end']
 
-        loss_fn_gan = self.loss_fns['gan']()
-        loss_fn_norm = self.loss_fns['norm']()
+        loss_fn_disc = self.loss_fns['disc']()
+        loss_fn_z = self.loss_fns['z']()
+        w_disc = self.loss_weights['disc']
+        #w_traj = self.loss_weights['traj']
+        w_z = self.loss_weights['z']
+
         dxdy_pred = generator(xy_in, dxdy_in, seq_start_end)
         xy_pred = relative_to_abs(dxdy_pred, xy_in[-1])
         xy_fake = torch.cat([xy_in, xy_pred], dim=0)
         scores_fake = discriminator(xy_fake, seq_start_end)
         target_fake = torch.ones_like(scores_fake).type(dtype) * random.uniform(0.7, 1.2)
 
-        norm_loss = loss_fn_norm(generator.mu, generator.z_random)  # Important: Here, we compare the latent vectors.
-        gan_loss = loss_fn_gan(scores_fake, target_fake)
+        z_loss = loss_fn_z(generator.mu, generator.z_random)  # Important: Here, we compare the latent vectors.
+        disc_loss = loss_fn_disc(scores_fake, target_fake)
 
-        loss = gan_loss + norm_loss * self.lambda_z
+        loss = w_disc * disc_loss + w_z * z_loss
         optimizer_g.zero_grad()
         loss.backward()
         optimizer_g.step()
 
-        return gan_loss.item(), norm_loss.item()
+        return disc_loss.item(), z_loss.item()
 
 
 class cVAESolver(Solver):
@@ -524,10 +526,9 @@ class cVAESolver(Solver):
     """
 
     def __init__(self, generator, discriminator, optim=torch.optim.Adam, optims_args=None,
-                 lambda_kl=1, loss_fns=None, init_params=False):
-        super().__init__(generator, discriminator, optim, optims_args, loss_fns, init_params)
+                 loss_fns=None, loss_weights=None, init_params=False):
+        super().__init__(generator, discriminator, optim, optims_args, loss_fns, loss_weights, init_params)
         generator.cvae()
-        self.lambda_kl = lambda_kl
         self.train_loss_history = {'cvae': {'generator': {'G_BCE': [], 'G_L1': [], 'G_KL': []},
                                             'discriminator': {'D_Real': [], 'D_Fake': []}}}
 
@@ -553,24 +554,29 @@ class cVAESolver(Solver):
         dxdy_in = batch['dxdy_in']
         seq_start_end = batch['seq_start_end']
 
-        loss_fn_gan = self.loss_fns['gan']()
-        loss_fn_norm = self.loss_fns['norm']()
+        loss_fn_disc = self.loss_fns['disc']()
+        loss_fn_traj = self.loss_fns['traj']()
+        loss_fn_kl = self.loss_fns['kl']
+        w_disc = self.loss_weights['disc']
+        w_traj = self.loss_weights['traj']
+        w_kl = self.loss_weights['kl']
+
         dxdy_pred = generator(xy_in, dxdy_in, seq_start_end, xy_out)
         xy_pred = relative_to_abs(dxdy_pred, xy_in[-1])
         xy_fake = torch.cat([xy_in, xy_pred], dim=0)
         scores_fake = discriminator(xy_fake, seq_start_end)
         target_fake = torch.ones_like(scores_fake).type(dtype) * random.uniform(0.7, 1.2)
 
-        norm_loss = loss_fn_norm(dxdy_pred, dxdy_out)
-        gan_loss = loss_fn_gan(scores_fake, target_fake)
+        traj_loss = loss_fn_traj(dxdy_pred, dxdy_out)
+        disc_loss = loss_fn_disc(scores_fake, target_fake)
         kl_loss = loss_fn_kl(generator.mu, generator.logvar)
 
-        loss = gan_loss + norm_loss + kl_loss * self.lambda_kl
+        loss = w_disc * disc_loss + w_traj * traj_loss + w_kl * kl_loss
         optimizer_g.zero_grad()
         loss.backward()
         optimizer_g.step()
 
-        return gan_loss.item(), norm_loss.item(), kl_loss.item()
+        return disc_loss.item(), traj_loss.item(), kl_loss.item()
 
     def discriminator_step(self, batch, generator, discriminator, optimizer_d):
         """Discriminator optimization step.
@@ -592,7 +598,7 @@ class cVAESolver(Solver):
         xy_out = batch['xy_out']
         dxdy_in = batch['dxdy_in']
         seq_start_end = batch['seq_start_end']
-        loss_fn_gan = self.loss_fns['gan']()
+        loss_fn_disc = self.loss_fns['disc']()
 
         dxdy_pred = generator(xy_in, dxdy_in, seq_start_end, xy_out)
         xy_pred = relative_to_abs(dxdy_pred, xy_in[-1])
@@ -606,27 +612,25 @@ class cVAESolver(Solver):
         target_real = torch.ones_like(scores_real).type(dtype) * random.uniform(0.7, 1.2)
         target_fake = torch.zeros_like(scores_fake).type(dtype) * random.uniform(0., 0.3)
 
-        gan_loss_real = loss_fn_gan(scores_real, target_real)
-        gan_loss_fake = loss_fn_gan(scores_fake, target_fake)
+        disc_loss_real = loss_fn_disc(scores_real, target_real)
+        disc_loss_fake = loss_fn_disc(scores_fake, target_fake)
 
-        loss = gan_loss_fake + gan_loss_real
+        loss = disc_loss_fake + disc_loss_real
         optimizer_d.zero_grad()
         loss.backward()
         optimizer_d.step()
 
-        return gan_loss_fake.item(), gan_loss_real.item()
+        return disc_loss_fake.item(), disc_loss_real.item()
 
 
 class BicycleSolver(BaseSolver):
 
-    def __init__(self, generator, discriminator, clrsolver, cvaesolver, optim=torch.optim.Adam, optims_args=None,
-                 lambda_kl=1, lambda_z=1, loss_fns=None, init_params=False):
-        super().__init__(generator, discriminator, optim, optims_args, loss_fns, init_params)
+    def __init__(self, generator, discriminator, optim=torch.optim.Adam, optims_args=None,
+                 loss_fns=None, loss_weights=None, init_params=False):
+        super().__init__(generator, discriminator, optim, optims_args, loss_fns, loss_weights, init_params)
 
-        self.lambda_kl = lambda_kl
-        self.lambda_z = lambda_z
-        self.cvaesolver = cvaesolver
-        self.clrsolver = clrsolver
+        self.cvaesolver = cVAESolver(generator, discriminator, optim, optims_args, loss_fns, loss_weights, init_params)
+        self.clrsolver = cLRSolver(generator, discriminator, optim, optims_args, loss_fns, loss_weights, init_params)
         self.train_loss_history = {'clr': {'generator': {'G_BCE': [-1], 'G_L1': []},
                                            'discriminator': {'D_Real': [], 'D_Fake': []}},
                                    'cvae': {'generator': {'G_BCE': [], 'G_L1': [], 'G_KL': []},
