@@ -385,13 +385,13 @@ class BicycleGenerator(nn.Module):
         self.mu = None
         self.logvar = None
 
-    def forward(self, xy_in, dxdy_in, seq_start_end, xy_out=None):
+    def forward(self, xy_in, dxdy_in, seq_start_end, xy_out=None, user_noise=None):
         if self.mode == 'clr':
             return self.clr_forward(xy_in, dxdy_in, seq_start_end)
         elif self.mode == 'cvae':
             return self.cvae_forward(xy_in, dxdy_in, seq_start_end, xy_out)
         elif self.mode == 'eval':
-            return self.generator(xy_in, dxdy_in, seq_start_end)
+            return self.generator(xy_in, dxdy_in, seq_start_end, user_noise=user_noise)
         else:
             raise AssertionError(f"self.type={self.mode} is invalid. Must be either 'clr', 'cvae' or 'eval'.")
 
