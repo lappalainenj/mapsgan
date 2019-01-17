@@ -65,7 +65,14 @@ class BaseSolver:
         torch.save(checkpoint, self.model_path)
         print('Training state saved to:\n' + str(self.model_path))
 
-    def load_checkpoint(self, model_path):
+    def load_generator(self, model_path):
+        if not cuda:
+            checkpoint = torch.load(model_path, map_location='cpu')
+        else:
+            checkpoint = torch.load(model_path)
+        self.generator.load_state_dict(checkpoint['g_state'])
+
+    def load_checkpoint(self, model_path, init_optim=False):
         print('Restoring from checkpoint')
         if not cuda:
             checkpoint = torch.load(model_path, map_location='cpu')
@@ -73,9 +80,10 @@ class BaseSolver:
             checkpoint = torch.load(model_path)
         self.generator.load_state_dict(checkpoint['g_state'])
         self.discriminator.load_state_dict(checkpoint['d_state'])
-        self.init_optimizers()
-        self.optimizer_g.load_state_dict(checkpoint['g_optim_state'])
-        self.optimizer_d.load_state_dict(checkpoint['d_optim_state'])
+        if init_optim:
+            self.init_optimizers()
+            self.optimizer_g.load_state_dict(checkpoint['g_optim_state'])
+            self.optimizer_d.load_state_dict(checkpoint['d_optim_state'])
         self.train_loss_history = checkpoint['train_loss_history']
         total_epochs = checkpoint['epochs']
         return total_epochs
