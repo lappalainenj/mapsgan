@@ -5,7 +5,7 @@ import time
 
 
 mode = 'cvae'
-fileprefix = '/test_bicy_weights_2'
+fileprefix = '/cloud/bicy_weights_2'
 lr_gen = 1e-3
 lr_dis = 1e-3
 loss_weights={'disc': 1, 'traj': 2, 'kl': 0.1, 'z': 0.5}
@@ -34,7 +34,8 @@ solver = BicycleSolver(generator, discriminator,
 
 print('Starting training...')
 time_start = time.time()
-solver.train(trainloader, epochs = 10000, checkpoint_every=49, steps={'generator': 1, 'discriminator': 1},
-              save_model=False, model_name=fileprefix, save_every=499, restore_checkpoint_from=None)
+solver.train(trainloader, epochs = 10000*8, checkpoint_every=49, steps={'generator': 1, 'discriminator': 1},
+              save_model=True, model_name=fileprefix, save_every=499,
+             restore_checkpoint_from='/home/yy/dl/mapsgan/models/cloud/bicy_weights_2_20190117-192721_epoch_10000')
 time_elapsed = (time.time() - time_start)/60
 print('End of training. Duration: ' + str(time_elapsed) + 'mins')

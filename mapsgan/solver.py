@@ -73,7 +73,7 @@ class BaseSolver:
         self.generator.load_state_dict(checkpoint['g_state'])
 
     def load_checkpoint(self, model_path, init_optim=False):
-        print('Restoring from checkpoint')
+        #print('Restoring from checkpoint')
         if not cuda:
             checkpoint = torch.load(model_path, map_location='cpu')
         else:
@@ -105,7 +105,7 @@ class BaseSolver:
         self.init=True
         if restore_checkpoint_from is not None and os.path.isfile(restore_checkpoint_from):
             [prev_epochs] = \
-                self.load_checkpoint(restore_checkpoint_from)
+                self.load_checkpoint(restore_checkpoint_from, init_optim=True)
             trained_epochs = prev_epochs
             print('Checkpoint restored')
         else:
@@ -146,7 +146,7 @@ class BaseSolver:
         if save_model:
             self.save_checkpoint(trained_epochs, model_name)
 
-    def test(self, loader, load_checkpoint_from=None, seed=17, z_dim=8):
+    def test(self, loader, load_checkpoint_from=None, seed=17, z_dim=8, z_interpolation=None):
         """Tests the generator on unseen data.
 
         Args:
@@ -155,7 +155,7 @@ class BaseSolver:
         """
         torch.manual_seed(seed)
         if load_checkpoint_from is not None and os.path.isfile(load_checkpoint_from):
-            print('Loading from checkpoint')
+            #print('Loading from checkpoint')
             if not cuda:
                 checkpoint = torch.load(load_checkpoint_from, map_location='cpu')
             else:
@@ -174,7 +174,10 @@ class BaseSolver:
             xy_out = batch['xy_out']
             dxdy_in = batch['dxdy_in']
             seq_start_end = batch['seq_start_end']
-            z = get_z_random(xy_in.size(1), 8)
+            if z_interpolation is None:
+                z = get_z_random(xy_in.size(1), z_dim)
+            else:
+                z = z_interpolation
             dxdy_pred = self.generator(xy_in, dxdy_in, seq_start_end, user_noise=z)
             xy_pred = relative_to_abs(dxdy_pred, xy_in[-1])
             for seq in seq_start_end:
@@ -183,6 +186,45 @@ class BaseSolver:
                 out['xy_out'].append(xy_out[:, start:end].cpu().numpy())
                 out['xy_pred'].append(xy_pred[:, start:end].cpu().detach().numpy())
         return out
+
+    def interpolate(self, loader, scene=25, stepsize=0.2, seed=20, z_dim=8, load_checkpoint_from=None):
+        torch.manual_seed(seed)
+        if load_checkpoint_from is not None and os.path.isfile(load_checkpoint_from):
+            print('Loading from checkpoint')
+            if not cuda:
+                checkpoint = torch.load(load_checkpoint_from, map_location='cpu')
+            else:
+                checkpoint = torch.load(load_checkpoint_from)
+            self.generator.load_state_dict(checkpoint['g_state'])
+
+        if cuda:
+            self.generator.cuda()
+
+        self.generator.eval()
+        out = {'xy_in': [], 'xy_out': [], 'xy_pred': []}
+        batch = list(iter(loader))[scene]
+        if cuda:
+            batch = {key: tensor.cuda() for key, tensor in batch.items()}
+        xy_in = batch['xy_in']
+        xy_out = batch['xy_out']
+        dxdy_in = batch['dxdy_in']
+        seq_start_end = batch['seq_start_end']
+        # Interpolation
+        t=np.arange(0, 1.+stepsize, stepsize)
+        z0 = get_z_random(xy_in.size(1), z_dim)
+        z1 = get_z_random(xy_in.size(1), z_dim)
+        for ti in t:
+            z = z0 + ti*(z1-z0)
+            dxdy_pred = self.generator(xy_in, dxdy_in, seq_start_end, user_noise=z)
+            xy_pred = relative_to_abs(dxdy_pred, xy_in[-1])
+            for seq in seq_start_end:
+                start, end = seq
+                out['xy_in'].append(xy_in[:, start:end].cpu().numpy())
+                out['xy_out'].append(xy_out[:, start:end].cpu().numpy())
+                out['xy_pred'].append(xy_pred[:, start:end].cpu().detach().numpy())
+        return out
+
+
 
     def _checkpoint(self, losses_g, losses_d):
         """Checkpoint during training.
@@ -724,3 +766,27 @@ class BicycleSolver(BaseSolver):
                 msg += f'{loss[-1]:<10.3f}' if loss else ''
             msg += f'\t cVAE'
         print(msg)
+
+    def load_checkpoint(self, model_path, init_optim=False):
+        #print('Restoring from checkpoint')
+        if not cuda:
+            checkpoint = torch.load(model_path, map_location='cpu')
+        else:
+            checkpoint = torch.load(model_path)
+        self.generator.load_state_dict(checkpoint['g_state'])
+        self.discriminator.load_state_dict(checkpoint['d_state'])
+        self.optimizer_g = self.optim([{'params': generator.generator.parameters()},
+                                       {'params': generator.encoder.parameters()}],
+                                      **self.optims_args['generator'])
+        if init_optim:
+            self.optimizer_g = self.optim([{'params': generator.generator.parameters()},
+                                           {'params': generator.encoder.parameters()}],
+                                          **self.optims_args['generator'])
+            self.optimizer_d = self.optim(self.discriminator.parameters(), **self.optims_args['discriminator'])
+
+            self.optimizer_g.load_state_dict(checkpoint['g_optim_state'])
+            self.optimizer_d.load_state_dict(checkpoint['d_optim_state'])
+        self.train_loss_history = checkpoint['train_loss_history']
+        total_epochs = checkpoint['epochs']
+        self.init = False
+        return total_epochs
