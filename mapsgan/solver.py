@@ -71,6 +71,7 @@ class BaseSolver:
         else:
             checkpoint = torch.load(model_path)
         self.generator.load_state_dict(checkpoint['g_state'])
+        self.train_loss_history = checkpoint['train_loss_history']
 
     def load_checkpoint(self, model_path, init_optim=False):
         print('Restoring from checkpoint')
@@ -174,7 +175,7 @@ class BaseSolver:
             xy_out = batch['xy_out']
             dxdy_in = batch['dxdy_in']
             seq_start_end = batch['seq_start_end']
-            z = get_z_random(xy_in.size(1), 8)
+            z = get_z_random(xy_in.size(1), z_dim)
             dxdy_pred = self.generator(xy_in, dxdy_in, seq_start_end, user_noise=z)
             xy_pred = relative_to_abs(dxdy_pred, xy_in[-1])
             for seq in seq_start_end:
@@ -641,10 +642,8 @@ class BicycleSolver(BaseSolver):
 
         self.cvaesolver = cVAESolver(generator, discriminator, optim, optims_args, loss_fns, loss_weights, init_params)
         self.clrsolver = cLRSolver(generator, discriminator, optim, optims_args, loss_fns, loss_weights, init_params)
-        self.train_loss_history = {'clr': {'generator': {'G_BCE': [-1], 'G_L1': []},
-                                           'discriminator': {'D_Real': [], 'D_Fake': []}},
-                                   'cvae': {'generator': {'G_BCE': [], 'G_L1': [], 'G_KL': []},
-                                            'discriminator': {'D_Real': [], 'D_Fake': []}}}
+        self.train_loss_history = {'generator': {'G_BCE': [], 'G_L1': [], 'G_L1z': [], 'G_KL': []},
+                                   'discriminator': {'D_Real': [], 'D_Fake': []}}
 
     def generator_step(self, batch, generator, discriminator, optimizer_g):
         if self.init:
@@ -684,43 +683,32 @@ class BicycleSolver(BaseSolver):
 
         Note: Here we can store everything that we need for evaluation and
             save states and models to the hard drive.
-        TODO: Implement a mechanism that saves the models whenever accuracy increased.
+        TODO: Only G_L1 differ per cvae, clr. Implement rather G_L1 and G_L1z
         """
         if self.generator.mode == 'cvae':
-            self.train_loss_history['clr']['generator']['G_BCE'].append(losses_g[0])
-            self.train_loss_history['clr']['generator']['G_L1'].append(losses_g[1])
-            self.train_loss_history['clr']['discriminator']['D_Fake'].append(losses_d[0])
-            self.train_loss_history['clr']['discriminator']['D_Real'].append(losses_d[1])
+            self.train_loss_history['generator']['G_L1'].append(losses_g[1])
         elif self.generator.mode == 'clr':
-            self.train_loss_history['cvae']['generator']['G_BCE'].append(losses_g[0])
-            self.train_loss_history['cvae']['generator']['G_L1'].append(losses_g[1])
-            self.train_loss_history['cvae']['generator']['G_KL'].append(losses_g[2])
-            self.train_loss_history['cvae']['discriminator']['D_Fake'].append(losses_d[0])
-            self.train_loss_history['cvae']['discriminator']['D_Real'].append(losses_d[1])
+            self.train_loss_history['generator']['G_L1z'].append(losses_g[1])
+            self.train_loss_history['generator']['G_KL'].append(losses_g[2])
+        self.train_loss_history['generator']['G_BCE'].append(losses_g[0])
+        self.train_loss_history['discriminator']['D_Fake'].append(losses_d[0])
+        self.train_loss_history['discriminator']['D_Real'].append(losses_d[1])
 
     def _pprint(self, epochs, init=False):
         """Pretty prints the losses."""
         if init:
             msg = f"\n{'Generator Losses':>23}"
-            msg += 'Discriminator Losses'.rjust(len(self.train_loss_history['cvae']['generator']) * 10 + 4)
+            msg += 'Discriminator Losses'.rjust(len(self.train_loss_history['generator']) * 10 + 4)
             msg += '\nEpochs '
-            for type in self.train_loss_history['cvae']['generator']:
+            for type in self.train_loss_history['generator']:
                 msg += f'{type:<10}'
-            for type in self.train_loss_history['cvae']['discriminator']:
+            for type in self.train_loss_history['discriminator']:
                 msg += f'{type:<10}'
         else:
             msg = f'{epochs:<7.0f}'
-            for type, loss in self.train_loss_history['clr']['generator'].items():
-                msg += f'{loss[-1]:<10.3f}' if loss else ''
-            msg += ''.rjust(10)
-            for type, loss in self.train_loss_history['clr']['discriminator'].items():
-                msg += f'{loss[-1]:<10.3f}' if loss else ''
-            msg += f'\t cLR\n'
-            msg += f'{epochs:<7.0f}'
-            for type, loss in self.train_loss_history['cvae']['generator'].items():
-                msg += f'{loss[-1]:<10.3f}' if loss else ''
-            msg += ''
-            for type, loss in self.train_loss_history['cvae']['discriminator'].items():
-                msg += f'{loss[-1]:<10.3f}' if loss else ''
-            msg += f'\t cVAE'
+            for type, loss in self.train_loss_history['generator'].items():
+                msg += f'{loss[-1]:<10.3f}' if loss else ''.rjust(10)
+            #msg += ''.rjust(10)
+            for type, loss in self.train_loss_history['discriminator'].items():
+                msg += f'{loss[-1]:<10.3f}' if loss else ''.rjust(10)
         print(msg)
