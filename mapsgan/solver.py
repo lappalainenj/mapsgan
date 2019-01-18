@@ -104,8 +104,8 @@ class BaseSolver:
         """
         self.init=True
         if restore_checkpoint_from is not None and os.path.isfile(restore_checkpoint_from):
-            [prev_epochs] = \
-                self.load_checkpoint(restore_checkpoint_from, init_optim=True)
+            print(restore_checkpoint_from)
+            prev_epochs = self.load_checkpoint(restore_checkpoint_from, init_optim=True)
             trained_epochs = prev_epochs
             print('Checkpoint restored')
         else:
@@ -767,26 +767,8 @@ class BicycleSolver(BaseSolver):
             msg += f'\t cVAE'
         print(msg)
 
-    def load_checkpoint(self, model_path, init_optim=False):
-        #print('Restoring from checkpoint')
-        if not cuda:
-            checkpoint = torch.load(model_path, map_location='cpu')
-        else:
-            checkpoint = torch.load(model_path)
-        self.generator.load_state_dict(checkpoint['g_state'])
-        self.discriminator.load_state_dict(checkpoint['d_state'])
-        self.optimizer_g = self.optim([{'params': generator.generator.parameters()},
-                                       {'params': generator.encoder.parameters()}],
+    def init_optimizers(self):
+        self.optimizer_g = self.optim([{'params': self.generator.generator.parameters()},
+                                       {'params': self.generator.encoder.parameters()}],
                                       **self.optims_args['generator'])
-        if init_optim:
-            self.optimizer_g = self.optim([{'params': generator.generator.parameters()},
-                                           {'params': generator.encoder.parameters()}],
-                                          **self.optims_args['generator'])
-            self.optimizer_d = self.optim(self.discriminator.parameters(), **self.optims_args['discriminator'])
-
-            self.optimizer_g.load_state_dict(checkpoint['g_optim_state'])
-            self.optimizer_d.load_state_dict(checkpoint['d_optim_state'])
-        self.train_loss_history = checkpoint['train_loss_history']
-        total_epochs = checkpoint['epochs']
-        self.init = False
-        return total_epochs
+        self.optimizer_d = self.optim(self.discriminator.parameters(), **self.optims_args['discriminator'])

@@ -34,8 +34,8 @@ solver = BicycleSolver(generator, discriminator,
 
 print('Starting training...')
 time_start = time.time()
-solver.train(trainloader, epochs = 10000*8, checkpoint_every=49, steps={'generator': 1, 'discriminator': 1},
+solver.train(trainloader, epochs = 10000*6, checkpoint_every=49, steps={'generator': 1, 'discriminator': 1},
               save_model=True, model_name=fileprefix, save_every=499,
-             restore_checkpoint_from='/home/yy/dl/mapsgan/models/cloud/bicy_weights_2_20190117-192721_epoch_10000')
+             restore_checkpoint_from='/home/yy/ADL4CV/mapsgan/models/cloud/bicy_weights_2_20190117-192721_epoch_10000')
 time_elapsed = (time.time() - time_start)/60
 print('End of training. Duration: ' + str(time_elapsed) + 'mins')
