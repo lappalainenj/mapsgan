@@ -43,7 +43,9 @@ class BaseSolver:
         if cuda:
             [model.cuda() for model in self.models]
         self.optim = optim
-        self.optims_args = optims_args if optims_args else {'generator': {'lr': 1e-3}, 'discriminator': {'lr': 1e-3}}  # default
+        self.optims_args = optims_args if optims_args else {'generator': {'lr': 1e-3},
+                                                            'discriminator': {'lr': 1e-3},
+                                                            'encoder': {'lr': 1e-3}}  # default
         self.optimizer_g = None
         self.optimizer_d = None
         self.loss_fns = loss_fns if loss_fns else {'traj': nn.L1Loss, 'disc': nn.BCEWithLogitsLoss, 'z': nn.L1Loss,
@@ -52,13 +54,17 @@ class BaseSolver:
         self.loss_weights = loss_weights if loss_weights else weights
         self.train_loss_history = {'generator': {'G_BCE': [], 'G_L1': []},
                                    'discriminator': {'D_Real': [], 'D_Fake': []}}
+        self.encoder_optim=None
+        self.optimizer_e=None
 
     def save_checkpoint(self, trained_epochs, model_name):
+        e_optim_state = self.encoder_optim.state_dict() if self.encoder_optim else None
         checkpoint = {'epochs': trained_epochs,
                       'g_state': self.generator.state_dict(),
                       'd_state': self.discriminator.state_dict(),
                       'g_optim_state': self.optimizer_g.state_dict(),
                       'd_optim_state': self.optimizer_d.state_dict(),
+                      'e_optim_state': e_optim_state,
                       'train_loss_history': self.train_loss_history}
         self.model_str = 'models/' + model_name + '_' + time.strftime("%Y%m%d-%H%M%S") + '_epoch_' + str(trained_epochs)
         self.model_path = root_path / self.model_str
@@ -85,6 +91,8 @@ class BaseSolver:
             self.init_optimizers()
             self.optimizer_g.load_state_dict(checkpoint['g_optim_state'])
             self.optimizer_d.load_state_dict(checkpoint['d_optim_state'])
+        if self.encoder_optim:
+            self.optimizer_e.load_state_dict(checkpoint['e_optim_state'])
         self.train_loss_history = checkpoint['train_loss_history']
         total_epochs = checkpoint['epochs']
         return total_epochs
@@ -113,7 +121,6 @@ class BaseSolver:
             trained_epochs = 0
             self.init_optimizers()
             print('Training new model')
-
 
         self.generator.train()
         self.discriminator.train()
@@ -241,9 +248,10 @@ class BaseSolver:
         print(msg)
 
     def init_optimizers(self):
-        self.optimizer_g = self.optim(self.generator.parameters(), **self.optims_args['generator'])
+        self.optimizer_g = self.optim(self.generator.parameters(), **self.optims_args['generator']) # will be overwritten in bicycle
         self.optimizer_d = self.optim(self.discriminator.parameters(), **self.optims_args['discriminator'])
-
+        if self.encoder_optim:
+            self.optimizer_e = self.encoder_optim(self.generator.encoder.parameters(), **self.optims_args['encoder'])
 
 class Solver(BaseSolver):
     """Implements a generator and a discriminator step.
@@ -478,12 +486,13 @@ class cLRSolver(Solver):
     # TODO: Either make generic somehow to work with sgan too or implement an sgan version.
     """
 
-    def __init__(self, generator, discriminator, optim=torch.optim.Adam, optims_args=None,
+    def __init__(self, generator, discriminator, optim=torch.optim.Adam, encoder_optim=torch.optim.SGD, optims_args=None,
                  loss_fns=None, loss_weights=None, init_params=False):
         super().__init__(generator, discriminator, optim, optims_args, loss_fns, loss_weights, init_params)
         generator.clr()
         self.train_loss_history = {'clr': {'generator': {'G_BCE': [], 'G_L1': []},
                                            'discriminator': {'D_Real': [], 'D_Fake': []}}}
+        self.encoder_optim = encoder_optim
 
     def generator_step(self, batch, generator, discriminator, optimizer_g):
         """Generator optimization step.
@@ -523,8 +532,10 @@ class cLRSolver(Solver):
 
         loss = w_disc * disc_loss + w_z * z_loss
         optimizer_g.zero_grad()
+        self.optimizer_e.zero_grad()
         loss.backward()
         optimizer_g.step()
+        self.optimizer_e.step()
 
         return disc_loss.item(), z_loss.item()
 
@@ -536,12 +547,13 @@ class cVAESolver(Solver):
     # TODO: Either make generic somehow to work with sgan too or implement an sgan version.
     """
 
-    def __init__(self, generator, discriminator, optim=torch.optim.Adam, optims_args=None,
+    def __init__(self, generator, discriminator, optim=torch.optim.Adam, encoder_optim=torch.optim.SGD, optims_args=None,
                  loss_fns=None, loss_weights=None, init_params=False):
         super().__init__(generator, discriminator, optim, optims_args, loss_fns, loss_weights, init_params)
         generator.cvae()
         self.train_loss_history = {'cvae': {'generator': {'G_BCE': [], 'G_L1': [], 'G_KL': []},
                                             'discriminator': {'D_Real': [], 'D_Fake': []}}}
+        self.encoder_optim = encoder_optim
 
     def generator_step(self, batch, generator, discriminator, optimizer_g):
         """Generator optimization step.
@@ -584,8 +596,10 @@ class cVAESolver(Solver):
 
         loss = w_disc * disc_loss + w_traj * traj_loss + w_kl * kl_loss
         optimizer_g.zero_grad()
+        self.optimizer_e.zero_grad()
         loss.backward()
         optimizer_g.step()
+        self.optimizer_e.step()
 
         return disc_loss.item(), traj_loss.item(), kl_loss.item()
 
@@ -636,28 +650,29 @@ class cVAESolver(Solver):
 
 class BicycleSolver(BaseSolver):
 
-    def __init__(self, generator, discriminator, optim=torch.optim.Adam, optims_args=None,
+    def __init__(self, generator, discriminator, optim=torch.optim.Adam, encoder_optim=torch.optim.SGD, optims_args=None,
                  loss_fns=None, loss_weights=None, init_params=False):
         super().__init__(generator, discriminator, optim, optims_args, loss_fns, loss_weights, init_params)
 
-        self.cvaesolver = cVAESolver(generator, discriminator, optim, optims_args, loss_fns, loss_weights, init_params)
-        self.clrsolver = cLRSolver(generator, discriminator, optim, optims_args, loss_fns, loss_weights, init_params)
+        self.cvaesolver = cVAESolver(generator, discriminator, optim, encoder_optim, optims_args, loss_fns, loss_weights, init_params)
+        self.clrsolver = cLRSolver(generator, discriminator, optim, encoder_optim, optims_args, loss_fns, loss_weights, init_params)
         self.train_loss_history = {'generator': {'G_BCE': [], 'G_L1': [], 'G_L1z': [], 'G_KL': []},
                                    'discriminator': {'D_Real': [], 'D_Fake': []}}
+        self.encoder_optim = encoder_optim
 
     def generator_step(self, batch, generator, discriminator, optimizer_g):
         if self.init:
-            self.optimizer_g = self.optim([{'params': generator.generator.parameters()},
-                                      {'params': generator.encoder.parameters()}],
-                                     **self.optims_args['generator'])
+            self.optimizer_g = self.optim(generator.generator.parameters(), **self.optims_args['generator'])
+            self.cvaesolver.optimizer_e = self.optimizer_e
+            self.clrsolver.optimizer_e = self.optimizer_e
             self.init=False
         if generator.mode == 'clr':
-            self.optimizer_g.param_groups[1]['lr'] = 0.
+            self.optimizer_e.param_groups[0]['lr'] = 0.
             bce_loss, norm_loss = self.clrsolver.generator_step(batch, generator, discriminator, optimizer_g)
             losses = (bce_loss, norm_loss)
             generator.cvae()
         elif generator.mode == 'cvae':
-            self.optimizer_g.param_groups[1]['lr'] = self.optimizer_g.defaults['lr']
+            self.optimizer_e.param_groups[0]['lr'] = self.optimizer_e.defaults['lr']
             bce_loss, norm_loss, kl_loss = self.cvaesolver.generator_step(batch, generator, discriminator, optimizer_g)
             losses = (bce_loss, norm_loss, kl_loss)
             generator.clr()
