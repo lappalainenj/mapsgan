@@ -131,7 +131,7 @@ class Visualization(Evaluation):
     def __init__(self):
         pass
 
-    def trajectories(self, output, scenes = [2], legend=False):
+    def trajectories(self, output, scenes = [2], legend=False, ground_truth=False):
         """
 
         Args:
@@ -146,15 +146,18 @@ class Visualization(Evaluation):
                  ground truth as small dots
 
         """
-        if len(scenes) > 1:
+        if isinstance(scenes, list):
             scenes_list = scenes
             num_scenes = len(scenes)
+        elif not scenes:
+            num_scenes = len(output['xy_in'])
+            scenes_list = list(range(num_scenes))
         else:
-            num_scenes = scenes[0]
+            num_scenes = scenes
             scenes_list = np.random.randint(len(output['xy_in']), size=num_scenes)
 
-        gridwidth = int(np.ceil(np.sqrt(num_scenes)))
-        gridheight = gridwidth if gridwidth * (gridwidth - 1) < num_scenes else (gridwidth - 1)
+        gridwidth = int(np.ceil(np.sqrt(num_scenes)))+1
+        gridheight = gridwidth if gridwidth * (gridwidth - 1) < num_scenes else (gridwidth -1)-1
         figsize = [5*gridwidth, 5*gridheight]
 
         ymin = np.min([np.min(seq[:, :, 1]) for scene in output.values() for seq in scene]) - 0.1
@@ -173,12 +176,15 @@ class Visualization(Evaluation):
             ax = self.plot.init_subplot(type, tot_tup=(gridheight, gridwidth), sp_tup=(int(i // gridwidth), int(i % gridwidth)))
             ax.set_xlim([xmin, xmax])
             ax.set_ylim([ymin, ymax])
+            ax.set_xticks([])
+            ax.set_yticks([])
 
             for a in range(num_agents):
                 ax.plot( output['xy_in'][s][:, a, 0], output['xy_in'][s][:, a, 1],
                          'o-', c=color[a%len(color)], markersize=5, label=f'Input Agent {a}')
-                ax.plot( output['xy_out'][s][:, a, 0], output['xy_out'][s][:, a, 1],
-                         '.-', c=color[a%len(color)], markersize=5, label=f'Output Agent {a}')
+                if ground_truth:
+                    ax.plot( output['xy_out'][s][:, a, 0], output['xy_out'][s][:, a, 1],
+                             '.-', c=color[a%len(color)], markersize=5, label=f'Output Agent {a}')
                 ax.plot( output['xy_pred'][s][:, a, 0], output['xy_pred'][s][:, a, 1],
                          'x-', c=color[a%len(color)], markersize=5,  label=f'Prediction Agent {a}')
 
@@ -189,13 +195,14 @@ class Visualization(Evaluation):
             for a in range(max_a):
                 lines.append(mlines.Line2D([], [], color=color[a%len(color)], marker='o', c=color[a%len(color)],
                                           markersize=10, label=f'Input Agent {a+1}'))
-                lines.append(mlines.Line2D([], [], color=color[a%len(color)], marker='.', c=color[a%len(color)],
-                                      markersize=10, label=f'Groundtruth Agent {a+1}'))
+                if ground_truth:
+                    lines.append(mlines.Line2D([], [], color=color[a%len(color)], marker='.', c=color[a%len(color)],
+                                          markersize=10, label=f'Groundtruth Agent {a+1}'))
                 lines.append(mlines.Line2D([], [], color=color[a%len(color)], marker='x', c=color[a%len(color)],
                                       markersize=10, label=f'Prediction Agent {a+1}'))
 
             fig.legend(handles=lines, loc=(0.6, 0.055))
-            plt.show()
+            #plt.show()
 
     def loss(self, loss_history, types = None, figsize = [16, 4], figtitle = ''):
         """Plot losses.

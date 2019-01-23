@@ -8,6 +8,7 @@ from pathlib import Path
 from mapsgan.utils import get_dtypes, relative_to_abs, init_weights, get_z_random
 from mapsgan.losses import l2_loss as loss_fn_l2
 from mapsgan.losses import kl_loss as loss_fn_kl
+from sgan import TrajectoryGenerator, TrajectoryDiscriminator
 
 long_dtype, dtype = get_dtypes()  # dtype is either torch.FloatTensor or torch.cuda.FloatTensor
 cuda = torch.cuda.is_available()
@@ -366,8 +367,17 @@ class Solver(BaseSolver):
         xy_fake = torch.cat([xy_in, xy_pred], dim=0)
         xy_real = torch.cat([xy_in, xy_out], dim=0)
 
-        scores_fake = discriminator(xy_fake, seq_start_end)
-        scores_real = discriminator(xy_real, seq_start_end)
+
+        if isinstance(discriminator, TrajectoryDiscriminator):
+            dxdy_out = batch['dxdy_out']
+            dxdy_real = torch.cat([dxdy_in, dxdy_out], dim=0)
+            dxdy_fake = torch.cat([dxdy_in, dxdy_pred], dim=0)
+            scores_fake = discriminator(xy_fake, dxdy_fake, seq_start_end)
+            scores_real = discriminator(xy_real, dxdy_real, seq_start_end)
+        else:
+            scores_fake = discriminator(xy_fake, seq_start_end)
+            scores_real = discriminator(xy_real, seq_start_end)
+
 
         target_real = torch.ones_like(scores_real).type(dtype) * random.uniform(0.7, 1.2)
         target_fake = torch.zeros_like(scores_fake).type(dtype) * random.uniform(0., 0.3)
@@ -556,7 +566,12 @@ class cLRSolver(Solver):
         dxdy_pred = generator(xy_in, dxdy_in, seq_start_end)
         xy_pred = relative_to_abs(dxdy_pred, xy_in[-1])
         xy_fake = torch.cat([xy_in, xy_pred], dim=0)
-        scores_fake = discriminator(xy_fake, seq_start_end)
+        if isinstance(discriminator, TrajectoryDiscriminator):
+            dxdy_out = batch['dxdy_out']
+            dxdy_fake = torch.cat([dxdy_in, dxdy_pred], dim=0)
+            scores_fake = discriminator(xy_fake, dxdy_fake, seq_start_end)
+        else:
+            scores_fake = discriminator(xy_fake, seq_start_end)
         target_fake = torch.ones_like(scores_fake).type(dtype) * random.uniform(0.7, 1.2)
 
         z_loss = loss_fn_z(generator.mu, generator.z_random)  # Important: Here, we compare the latent vectors.
@@ -616,7 +631,12 @@ class cVAESolver(Solver):
         dxdy_pred = generator(xy_in, dxdy_in, seq_start_end, xy_out)
         xy_pred = relative_to_abs(dxdy_pred, xy_in[-1])
         xy_fake = torch.cat([xy_in, xy_pred], dim=0)
-        scores_fake = discriminator(xy_fake, seq_start_end)
+        if isinstance(discriminator, TrajectoryDiscriminator):
+            dxdy_out = batch['dxdy_out']
+            dxdy_fake = torch.cat([dxdy_in, dxdy_pred], dim=0)
+            scores_fake = discriminator(xy_fake, dxdy_fake, seq_start_end)
+        else:
+            scores_fake = discriminator(xy_fake, seq_start_end)
         target_fake = torch.ones_like(scores_fake).type(dtype) * random.uniform(0.7, 1.2)
 
         traj_loss = loss_fn_traj(dxdy_pred, dxdy_out)
@@ -658,8 +678,15 @@ class cVAESolver(Solver):
         xy_fake = torch.cat([xy_in, xy_pred], dim=0)
         xy_real = torch.cat([xy_in, xy_out], dim=0)
 
-        scores_fake = discriminator(xy_fake, seq_start_end)
-        scores_real = discriminator(xy_real, seq_start_end)
+        if isinstance(discriminator, TrajectoryDiscriminator):
+            dxdy_out = batch['dxdy_out']
+            dxdy_real = torch.cat([dxdy_in, dxdy_out], dim=0)
+            dxdy_fake = torch.cat([dxdy_in, dxdy_pred], dim=0)
+            scores_fake = discriminator(xy_fake, dxdy_fake, seq_start_end)
+            scores_real = discriminator(xy_real, dxdy_real, seq_start_end)
+        else:
+            scores_fake = discriminator(xy_fake, seq_start_end)
+            scores_real = discriminator(xy_real, seq_start_end)
 
         target_real = torch.ones_like(scores_real).type(dtype) * random.uniform(0.7, 1.2)
         target_fake = torch.zeros_like(scores_fake).type(dtype) * random.uniform(0., 0.3)
