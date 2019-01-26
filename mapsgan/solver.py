@@ -58,7 +58,7 @@ class BaseSolver:
         self.optimizer_e=None
 
     def save_checkpoint(self, trained_epochs, model_name):
-        e_optim_state = self.encoder_optim.state_dict() if self.encoder_optim else None
+        e_optim_state = self.optimizer_e.state_dict() if self.encoder_optim else None
         checkpoint = {'epochs': trained_epochs,
                       'g_state': self.generator.state_dict(),
                       'd_state': self.discriminator.state_dict(),
