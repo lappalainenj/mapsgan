@@ -241,9 +241,13 @@ class BaseSolver:
 
     def validation(self, loader=None, init=False):
         if init:
-            if hasattr(self.generator, 'mode'):
-            self.train_loss_history.update({'validation': {}})
+            self.train_loss_history.update({'validation': {'generator': {'G_BCE': [], 'G_L1': [], 'G_L1z': [], 'G_KL': []},
+                                                               'discriminator': {'D_Real': [], 'D_Fake': []} }})
         else:
+            if hasattr(self.generator, 'mode'):
+                gen_mode = self.generator.mode
+            else:
+                gen_mode = False
             self.generator.eval()
 
             losses_g=[]
@@ -257,17 +261,17 @@ class BaseSolver:
 
             # TODO: DIVERSITY SCORES
             # TODO: pretty print
-            if hasattr(self.generator, 'mode'):
-                if self.generator.mode == 'clr':
-                    self.train_loss_history['validation']['clr']['G_BCE'].append(losses_g[0])
-                    self.train_loss_history['validation']['clr']['G_L1'].append(losses_g[1])
-                elif self.generator.mode == 'cvae':
-                    self.train_loss_history['validation']['cvae']['G_BCE'].append(losses_g[0])
-                    self.train_loss_history['validation']['cvae']['G_L1'].append(losses_g[1])
-                    self.train_loss_history['validation']['cvae']['G_KL'].append(losses_g[2])
+            if gen_mode:
+                if gen_mode == 'clr':
+                    self.train_loss_history['validation']['generator']['G_BCE'].append(losses_g[0])
+                    self.train_loss_history['validation']['generator']['G_L1z'].append(losses_g[1])
+                elif gen_mode == 'cvae':
+                    self.train_loss_history['validation']['generator']['G_BCE'].append(losses_g[0])
+                    self.train_loss_history['validation']['generator']['G_L1'].append(losses_g[1])
+                    self.train_loss_history['validation']['generator']['G_KL'].append(losses_g[2])
             else:
-                self.train_loss_history['validation']['G_BCE'].append(losses_g[0])
-                self.train_loss_history['validation']['G_L1'].append(losses_g[1])
+                self.train_loss_history['validation']['generator']['G_BCE'].append(losses_g[0])
+                self.train_loss_history['validation']['generator']['G_L1'].append(losses_g[1])
             self.generator.train()
 
 
@@ -284,16 +288,16 @@ class BaseSolver:
         """
         if hasattr(self.generator, 'mode'):
             if self.generator.mode == 'clr':
-                self.train_loss_history['clr']['generator']['G_BCE'].append(losses_g[0])
-                self.train_loss_history['clr']['generator']['G_L1'].append(losses_g[1])
-                self.train_loss_history['clr']['discriminator']['D_Fake'].append(losses_d[0])
-                self.train_loss_history['clr']['discriminator']['D_Real'].append(losses_d[1])
+                self.train_loss_history['generator']['G_BCE'].append(losses_g[0])
+                self.train_loss_history['generator']['G_L1z'].append(losses_g[1])
+                self.train_loss_history['discriminator']['D_Fake'].append(losses_d[0])
+                self.train_loss_history['discriminator']['D_Real'].append(losses_d[1])
             elif self.generator.mode == 'cvae':
-                self.train_loss_history['cvae']['generator']['G_BCE'].append(losses_g[0])
-                self.train_loss_history['cvae']['generator']['G_L1'].append(losses_g[1])
-                self.train_loss_history['cvae']['generator']['G_KL'].append(losses_g[2])
-                self.train_loss_history['cvae']['discriminator']['D_Fake'].append(losses_d[0])
-                self.train_loss_history['cvae']['discriminator']['D_Real'].append(losses_d[1])
+                self.train_loss_history['generator']['G_BCE'].append(losses_g[0])
+                self.train_loss_history['generator']['G_L1'].append(losses_g[1])
+                self.train_loss_history['generator']['G_KL'].append(losses_g[2])
+                self.train_loss_history['discriminator']['D_Fake'].append(losses_d[0])
+                self.train_loss_history['discriminator']['D_Real'].append(losses_d[1])
         else:
             self.train_loss_history['generator']['G_BCE'].append(losses_g[0])
             self.train_loss_history['generator']['G_L1'].append(losses_g[1])
@@ -302,13 +306,7 @@ class BaseSolver:
 
     def _pprint(self, epochs, init=False):
         """Pretty prints the losses."""
-        if hasattr(self.generator, 'mode'):
-            if self.generator.mode == 'clr':
-                loss_history = self.train_loss_history['clr']
-            if self.generator.mode == 'cvae':
-                loss_history = self.train_loss_history['cvae']
-        else:
-            loss_history = self.train_loss_history
+        loss_history = self.train_loss_history
         if init:
             msg = f"\n{'Generator Losses':>23}"
             msg += 'Discriminator Losses'.rjust(len(loss_history['generator']) * 10 + 4)
@@ -583,8 +581,8 @@ class cLRSolver(Solver):
                  loss_fns=None, loss_weights=None, init_params=False):
         super().__init__(generator, discriminator, optim, optims_args, loss_fns, loss_weights, init_params)
         generator.clr()
-        self.train_loss_history = {'clr': {'generator': {'G_BCE': [], 'G_L1': []},
-                                           'discriminator': {'D_Real': [], 'D_Fake': []}}}
+        self.train_loss_history = {'generator': {'G_BCE': [], 'G_L1z': []},
+                                   'discriminator': {'D_Real': [], 'D_Fake': []}}
         self.encoder_optim = encoder_optim
 
     def generator_step(self, batch, generator, discriminator, optimizer_g, val_mode=False):
@@ -648,8 +646,8 @@ class cVAESolver(Solver):
                  loss_fns=None, loss_weights=None, init_params=False):
         super().__init__(generator, discriminator, optim, optims_args, loss_fns, loss_weights, init_params)
         generator.cvae()
-        self.train_loss_history = {'cvae': {'generator': {'G_BCE': [], 'G_L1': [], 'G_KL': []},
-                                            'discriminator': {'D_Real': [], 'D_Fake': []}}}
+        self.train_loss_history = {'generator': {'G_BCE': [], 'G_L1': [], 'G_KL': []},
+                                   'discriminator': {'D_Real': [], 'D_Fake': []}}
         self.encoder_optim = encoder_optim
 
     def generator_step(self, batch, generator, discriminator, optimizer_g, val_mode=False):
