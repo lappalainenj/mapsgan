@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 
 from mapsgan.utils import get_dtypes, make_mlp, get_noise, get_z_random, relative_to_abs
+from sgan import TrajectoryGenerator, TrajectoryDiscriminator
 
 long_dtype, dtype = get_dtypes()  # dtype is either torch.FloatTensor or torch.cuda.FloatTensor
 
@@ -361,18 +362,21 @@ class BicycleGenerator(nn.Module):
         decoder_h_dim = h_dim + z_dim
         self.start_mode = start_mode
 
-        self.generator = generator(in_len=in_len,
-                                   out_len=out_len,
-                                   embedding_dim=embedding_dim,
-                                   encoder_h_dim=h_dim,
-                                   z_dim=z_dim,
-                                   num_layers=num_layers,
-                                   noise_type=noise_type,
-                                   noise_mix_type=noise_mix_type,
-                                   dropout=dropout,
-                                   noise_dim=noise_dim,
-                                   decoder_h_dim=decoder_h_dim,
-                                   **kwargs)
+        if generator == ToyGenerator:
+            self.generator = generator(in_len=in_len,
+                                       out_len=out_len,
+                                       embedding_dim=embedding_dim,
+                                       encoder_h_dim=h_dim,
+                                       z_dim=z_dim,
+                                       num_layers=num_layers,
+                                       noise_type=noise_type,
+                                       noise_mix_type=noise_mix_type,
+                                       dropout=dropout,
+                                       noise_dim=noise_dim,
+                                       decoder_h_dim=decoder_h_dim,
+                                       **kwargs)
+        elif isinstance(generator, TrajectoryGenerator):
+            self.generator = generator
 
         self.encoder = BicycleEncoder(embedding_dim=embedding_dim,
                                       h_dim=h_dim,

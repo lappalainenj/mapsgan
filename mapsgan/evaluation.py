@@ -131,7 +131,7 @@ class Visualization(Evaluation):
     def __init__(self):
         pass
 
-    def trajectories(self, output, scenes = [2], legend=False):
+    def trajectories(self, output, scenes = [2], legend=False, ground_truth=False):
         """
 
         Args:
@@ -146,22 +146,28 @@ class Visualization(Evaluation):
                  ground truth as small dots
 
         """
-        if len(scenes) > 1:
+        if isinstance(scenes, list):
             scenes_list = scenes
             num_scenes = len(scenes)
-        else:
-            num_scenes = scenes[0]
+        elif not scenes: #None: plot all
+            num_scenes = len(output['xy_in'])
+            scenes_list = list(range(num_scenes))
+        else: #int: plot int number of random scenes
+            num_scenes = scenes
             scenes_list = np.random.randint(len(output['xy_in']), size=num_scenes)
 
-        gridwidth = int(np.ceil(np.sqrt(num_scenes)))
-        gridheight = gridwidth if gridwidth * (gridwidth - 1) < num_scenes else (gridwidth - 1)
+        gridwidth = int(np.ceil(np.sqrt(num_scenes)))+1
+        gridheight = gridwidth if gridwidth * (gridwidth - 1) < num_scenes else (gridwidth -1)-1
         figsize = [5*gridwidth, 5*gridheight]
 
         ymin = np.min([np.min(seq[:, :, 1]) for scene in output.values() for seq in scene]) - 0.1
         ymax = np.max([np.max(seq[:, :, 1]) for scene in output.values() for seq in scene]) + 0.1
         xmin = np.min([np.min(seq[:, :, 0]) for scene in output.values() for seq in scene]) - 0.1
         xmax = np.max([np.max(seq[:, :, 0]) for scene in output.values() for seq in scene]) + 0.1
-
+        if xlim:
+            xmin, xmax = xlim
+        if ylim:
+            ymin, ymax = ylim
         # sns.set_context('poster')
         fig = self.plot.init_figure(figsize)
         max_a = 0
@@ -173,12 +179,15 @@ class Visualization(Evaluation):
             ax = self.plot.init_subplot(type, tot_tup=(gridheight, gridwidth), sp_tup=(int(i // gridwidth), int(i % gridwidth)))
             ax.set_xlim([xmin, xmax])
             ax.set_ylim([ymin, ymax])
+            ax.set_xticks([])
+            ax.set_yticks([])
 
             for a in range(num_agents):
                 ax.plot( output['xy_in'][s][:, a, 0], output['xy_in'][s][:, a, 1],
                          'o-', c=color[a%len(color)], markersize=5, label=f'Input Agent {a}')
-                ax.plot( output['xy_out'][s][:, a, 0], output['xy_out'][s][:, a, 1],
-                         '.-', c=color[a%len(color)], markersize=5, label=f'Output Agent {a}')
+                if ground_truth:
+                    ax.plot( output['xy_out'][s][:, a, 0], output['xy_out'][s][:, a, 1],
+                             '.-', c=color[a%len(color)], markersize=5, label=f'Output Agent {a}')
                 ax.plot( output['xy_pred'][s][:, a, 0], output['xy_pred'][s][:, a, 1],
                          'x-', c=color[a%len(color)], markersize=5,  label=f'Prediction Agent {a}')
 
@@ -189,13 +198,14 @@ class Visualization(Evaluation):
             for a in range(max_a):
                 lines.append(mlines.Line2D([], [], color=color[a%len(color)], marker='o', c=color[a%len(color)],
                                           markersize=10, label=f'Input Agent {a+1}'))
-                lines.append(mlines.Line2D([], [], color=color[a%len(color)], marker='.', c=color[a%len(color)],
-                                      markersize=10, label=f'Groundtruth Agent {a+1}'))
+                if ground_truth:
+                    lines.append(mlines.Line2D([], [], color=color[a%len(color)], marker='.', c=color[a%len(color)],
+                                          markersize=10, label=f'Groundtruth Agent {a+1}'))
                 lines.append(mlines.Line2D([], [], color=color[a%len(color)], marker='x', c=color[a%len(color)],
                                       markersize=10, label=f'Prediction Agent {a+1}'))
 
             fig.legend(handles=lines, loc=(0.6, 0.055))
-            plt.show()
+            #plt.show()
 
     def loss(self, loss_history, types = None, figsize = [16, 4], figtitle = ''):
         """Plot losses.
@@ -209,13 +219,16 @@ class Visualization(Evaluation):
         """
         losses = loss_history['generator']
         losses.update(loss_history['discriminator'])
+        keyswitch = {'D_real': 'D_Real', 'D_fake': 'D_Fake', 'G_gan': 'G_BCE', 'G_norm': 'G_L1',
+                     'G_BCE': 'G_BCE', 'G_L1': 'G_L1', 'G_KL': 'G_KL', 'D_Real':'D_Real', 'D_Fake':'D_Fake',
+                     'G_L1z':'G_L1z'}
         if not types:
             types = losses.keys()
-        losses = {type: loss for type, loss in losses.items() if type in types}  # filter out types
+        losses = {keyswitch[type]:loss for type, loss in losses.items() if type in types}  # filter out types
         num_axes = len(losses)
         fig = self.plot.init_figure(figsize)
         for i, (type, loss) in enumerate(losses.items()):
-            ax = self.plot.init_subplot(type, tot_tup=(1, num_axes), sp_tup=(0, i))
+            ax = self.plot.init_subplot(keyswitch[type], tot_tup=(1, num_axes), sp_tup=(0, i))
             ax.plot(loss)
             ax.set_xlabel('Checkpoints')
             #ax.set_yticks([])

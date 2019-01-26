@@ -8,6 +8,7 @@ from pathlib import Path
 from mapsgan.utils import get_dtypes, relative_to_abs, init_weights, get_z_random
 from mapsgan.losses import l2_loss as loss_fn_l2
 from mapsgan.losses import kl_loss as loss_fn_kl
+from sgan import TrajectoryGenerator, TrajectoryDiscriminator
 
 long_dtype, dtype = get_dtypes()  # dtype is either torch.FloatTensor or torch.cuda.FloatTensor
 cuda = torch.cuda.is_available()
@@ -43,7 +44,9 @@ class BaseSolver:
         if cuda:
             [model.cuda() for model in self.models]
         self.optim = optim
-        self.optims_args = optims_args if optims_args else {'generator': {'lr': 1e-3}, 'discriminator': {'lr': 1e-3}}  # default
+        self.optims_args = optims_args if optims_args else {'generator': {'lr': 1e-3},
+                                                            'discriminator': {'lr': 1e-3},
+                                                            'encoder': {'lr': 1e-3}}  # default
         self.optimizer_g = None
         self.optimizer_d = None
         self.loss_fns = loss_fns if loss_fns else {'traj': nn.L1Loss, 'disc': nn.BCEWithLogitsLoss, 'z': nn.L1Loss,
@@ -52,13 +55,17 @@ class BaseSolver:
         self.loss_weights = loss_weights if loss_weights else weights
         self.train_loss_history = {'generator': {'G_BCE': [], 'G_L1': []},
                                    'discriminator': {'D_Real': [], 'D_Fake': []}}
+        self.encoder_optim=None
+        self.optimizer_e=None
 
     def save_checkpoint(self, trained_epochs, model_name):
+        e_optim_state = self.optimizer_e.state_dict() if self.encoder_optim else None
         checkpoint = {'epochs': trained_epochs,
                       'g_state': self.generator.state_dict(),
                       'd_state': self.discriminator.state_dict(),
                       'g_optim_state': self.optimizer_g.state_dict(),
                       'd_optim_state': self.optimizer_d.state_dict(),
+                      'e_optim_state': e_optim_state,
                       'train_loss_history': self.train_loss_history}
         self.model_str = 'models/' + model_name + '_' + time.strftime("%Y%m%d-%H%M%S") + '_epoch_' + str(trained_epochs)
         self.model_path = root_path / self.model_str
@@ -71,6 +78,7 @@ class BaseSolver:
         else:
             checkpoint = torch.load(model_path)
         self.generator.load_state_dict(checkpoint['g_state'])
+        self.train_loss_history = checkpoint['train_loss_history']
 
     def load_checkpoint(self, model_path, init_optim=False):
         #print('Restoring from checkpoint')
@@ -84,12 +92,14 @@ class BaseSolver:
             self.init_optimizers()
             self.optimizer_g.load_state_dict(checkpoint['g_optim_state'])
             self.optimizer_d.load_state_dict(checkpoint['d_optim_state'])
+        if self.encoder_optim:
+            self.optimizer_e.load_state_dict(checkpoint['e_optim_state'])
         self.train_loss_history = checkpoint['train_loss_history']
         total_epochs = checkpoint['epochs']
         return total_epochs
 
     def train(self, loader, epochs, checkpoint_every=1, print_every=False, steps={'generator': 1, 'discriminator': 1},
-              save_model=False, model_name='', save_every=1000, restore_checkpoint_from=None):
+              save_model=False, model_name='', save_every=1000, val_every=False, testloader=None, restore_checkpoint_from=None):
         """Trains the GAN.
 
         Args:
@@ -104,8 +114,8 @@ class BaseSolver:
         """
         self.init=True
         if restore_checkpoint_from is not None and os.path.isfile(restore_checkpoint_from):
-            [prev_epochs] = \
-                self.load_checkpoint(restore_checkpoint_from, init_optim=True)
+            print(restore_checkpoint_from)
+            prev_epochs = self.load_checkpoint(restore_checkpoint_from, init_optim=True)
             trained_epochs = prev_epochs
             print('Checkpoint restored')
         else:
@@ -113,11 +123,12 @@ class BaseSolver:
             self.init_optimizers()
             print('Training new model')
 
-
         self.generator.train()
         self.discriminator.train()
         if print_every:
             self._pprint(epochs, init=self.init)
+        if val_every:
+            self.validation(init=self.init)
         while epochs:
             gsteps = steps['generator']
             dsteps = steps['discriminator']
@@ -136,8 +147,11 @@ class BaseSolver:
             if print_every and (epochs % print_every == 0):
                 self._pprint(epochs)
 
+            if val_every and (epochs % val_every == 0):
+                self.validation(loader=testloader)
+
             trained_epochs += 1
-            if (epochs % save_every == 0) & save_model:
+            if save_model and (epochs % save_every == 0):
                 self.save_checkpoint(trained_epochs, model_name)
 
             epochs -= 1
@@ -174,6 +188,7 @@ class BaseSolver:
             xy_out = batch['xy_out']
             dxdy_in = batch['dxdy_in']
             seq_start_end = batch['seq_start_end']
+
             if z_interpolation is None:
                 z = get_z_random(xy_in.size(1), z_dim)
             else:
@@ -224,6 +239,36 @@ class BaseSolver:
                 out['xy_pred'].append(xy_pred[:, start:end].cpu().detach().numpy())
         return out
 
+    def validation(self, loader=None, init=False):
+        if init:
+            if hasattr(self.generator, 'mode'):
+            self.train_loss_history.update({'validation': {}})
+        else:
+            self.generator.eval()
+
+            losses_g=[]
+            losses_list = [[],[],[]]
+            for batch in loader:
+                losses = self.generator_step(batch, self.generator, self.discriminator, self.optimizer_g, val_mode=True)
+                for i, l in enumerate(losses):
+                    losses_list[i].append(l)
+            for l in losses_list: # mean loss over batches
+                if len(l) != 0: losses_g.append(sum(l)/len(l))
+
+            # TODO: DIVERSITY SCORES
+            # TODO: pretty print
+            if hasattr(self.generator, 'mode'):
+                if self.generator.mode == 'clr':
+                    self.train_loss_history['validation']['clr']['G_BCE'].append(losses_g[0])
+                    self.train_loss_history['validation']['clr']['G_L1'].append(losses_g[1])
+                elif self.generator.mode == 'cvae':
+                    self.train_loss_history['validation']['cvae']['G_BCE'].append(losses_g[0])
+                    self.train_loss_history['validation']['cvae']['G_L1'].append(losses_g[1])
+                    self.train_loss_history['validation']['cvae']['G_KL'].append(losses_g[2])
+            else:
+                self.train_loss_history['validation']['G_BCE'].append(losses_g[0])
+                self.train_loss_history['validation']['G_L1'].append(losses_g[1])
+            self.generator.train()
 
 
     def _checkpoint(self, losses_g, losses_d):
@@ -282,9 +327,10 @@ class BaseSolver:
         print(msg)
 
     def init_optimizers(self):
-        self.optimizer_g = self.optim(self.generator.parameters(), **self.optims_args['generator'])
+        self.optimizer_g = self.optim(self.generator.parameters(), **self.optims_args['generator']) # will be overwritten in bicycle
         self.optimizer_d = self.optim(self.discriminator.parameters(), **self.optims_args['discriminator'])
-
+        if self.encoder_optim:
+            self.optimizer_e = self.encoder_optim(self.generator.encoder.parameters(), **self.optims_args['encoder'])
 
 class Solver(BaseSolver):
     """Implements a generator and a discriminator step.
@@ -296,7 +342,7 @@ class Solver(BaseSolver):
                  loss_weights=None, init_params=False):
         super().__init__(generator, discriminator, optim, optims_args, loss_fns, loss_weights, init_params)
 
-    def generator_step(self, batch, generator, discriminator, optimizer_g):
+    def generator_step(self, batch, generator, discriminator, optimizer_g, val_mode=False):
         """Generator optimization step.
 
         Args:
@@ -332,9 +378,11 @@ class Solver(BaseSolver):
         disc_loss = loss_fn_disc(scores_fake, target_fake)
 
         loss = w_disc * disc_loss + w_traj * traj_loss
-        optimizer_g.zero_grad()
-        loss.backward()
-        optimizer_g.step()
+
+        if not val_mode:
+            optimizer_g.zero_grad()
+            loss.backward()
+            optimizer_g.step()
 
         return disc_loss.item(), traj_loss.item()
 
@@ -366,8 +414,17 @@ class Solver(BaseSolver):
         xy_fake = torch.cat([xy_in, xy_pred], dim=0)
         xy_real = torch.cat([xy_in, xy_out], dim=0)
 
-        scores_fake = discriminator(xy_fake, seq_start_end)
-        scores_real = discriminator(xy_real, seq_start_end)
+
+        if isinstance(discriminator, TrajectoryDiscriminator):
+            dxdy_out = batch['dxdy_out']
+            dxdy_real = torch.cat([dxdy_in, dxdy_out], dim=0)
+            dxdy_fake = torch.cat([dxdy_in, dxdy_pred], dim=0)
+            scores_fake = discriminator(xy_fake, dxdy_fake, seq_start_end)
+            scores_real = discriminator(xy_real, dxdy_real, seq_start_end)
+        else:
+            scores_fake = discriminator(xy_fake, seq_start_end)
+            scores_real = discriminator(xy_real, seq_start_end)
+
 
         target_real = torch.ones_like(scores_real).type(dtype) * random.uniform(0.7, 1.2)
         target_fake = torch.zeros_like(scores_fake).type(dtype) * random.uniform(0., 0.3)
@@ -376,6 +433,7 @@ class Solver(BaseSolver):
         disc_loss_fake = loss_fn_disc(scores_fake, target_fake)
 
         loss = disc_loss_fake + disc_loss_real
+
         optimizer_d.zero_grad()
         loss.backward()
         optimizer_d.step()
@@ -396,7 +454,7 @@ class SGANSolver(BaseSolver):
         super().__init__(generator, discriminator, optim, optims_args, loss_fns, loss_weights, init_params)
         self.args = experiment
 
-    def generator_step(self, batch, generator, discriminator, optimizer_g):
+    def generator_step(self, batch, generator, discriminator, optimizer_g, val_mode=False):
         """Generator optimization step.
 
         Args:
@@ -450,12 +508,14 @@ class SGANSolver(BaseSolver):
         disc_loss = loss_fn_disc(scores_fake, target_fake)
 
         loss = w_disc * disc_loss + l2_loss
-        optimizer_g.zero_grad()
-        loss.backward()
-        if self.args.clip:
-            # QUESTION: Is this a Lipschitz constraining method as in W-GAN?
-            nn.utils.clip_grad_norm_(generator.parameters(), self.args.clip)
-        optimizer_g.step()
+
+        if not val_mode:
+            optimizer_g.zero_grad()
+            loss.backward()
+            if self.args.clip:
+                # QUESTION: Is this a Lipschitz constraining method as in W-GAN?
+                nn.utils.clip_grad_norm_(generator.parameters(), self.args.clip)
+            optimizer_g.step()
 
         return disc_loss.item(), l2_loss.item()
 
@@ -519,14 +579,15 @@ class cLRSolver(Solver):
     # TODO: Either make generic somehow to work with sgan too or implement an sgan version.
     """
 
-    def __init__(self, generator, discriminator, optim=torch.optim.Adam, optims_args=None,
+    def __init__(self, generator, discriminator, optim=torch.optim.Adam, encoder_optim=torch.optim.SGD, optims_args=None,
                  loss_fns=None, loss_weights=None, init_params=False):
         super().__init__(generator, discriminator, optim, optims_args, loss_fns, loss_weights, init_params)
         generator.clr()
         self.train_loss_history = {'clr': {'generator': {'G_BCE': [], 'G_L1': []},
                                            'discriminator': {'D_Real': [], 'D_Fake': []}}}
+        self.encoder_optim = encoder_optim
 
-    def generator_step(self, batch, generator, discriminator, optimizer_g):
+    def generator_step(self, batch, generator, discriminator, optimizer_g, val_mode=False):
         """Generator optimization step.
 
         Args:
@@ -556,17 +617,23 @@ class cLRSolver(Solver):
         dxdy_pred = generator(xy_in, dxdy_in, seq_start_end)
         xy_pred = relative_to_abs(dxdy_pred, xy_in[-1])
         xy_fake = torch.cat([xy_in, xy_pred], dim=0)
-        scores_fake = discriminator(xy_fake, seq_start_end)
+        if isinstance(discriminator, TrajectoryDiscriminator):
+            dxdy_out = batch['dxdy_out']
+            dxdy_fake = torch.cat([dxdy_in, dxdy_pred], dim=0)
+            scores_fake = discriminator(xy_fake, dxdy_fake, seq_start_end)
+        else:
+            scores_fake = discriminator(xy_fake, seq_start_end)
         target_fake = torch.ones_like(scores_fake).type(dtype) * random.uniform(0.7, 1.2)
 
         z_loss = loss_fn_z(generator.mu, generator.z_random)  # Important: Here, we compare the latent vectors.
         disc_loss = loss_fn_disc(scores_fake, target_fake)
 
         loss = w_disc * disc_loss + w_z * z_loss
-        optimizer_g.zero_grad()
-        loss.backward()
-        optimizer_g.step()
 
+        if not val_mode:
+            optimizer_g.zero_grad()
+            loss.backward()
+            optimizer_g.step()
         return disc_loss.item(), z_loss.item()
 
 
@@ -577,14 +644,15 @@ class cVAESolver(Solver):
     # TODO: Either make generic somehow to work with sgan too or implement an sgan version.
     """
 
-    def __init__(self, generator, discriminator, optim=torch.optim.Adam, optims_args=None,
+    def __init__(self, generator, discriminator, optim=torch.optim.Adam, encoder_optim=torch.optim.SGD, optims_args=None,
                  loss_fns=None, loss_weights=None, init_params=False):
         super().__init__(generator, discriminator, optim, optims_args, loss_fns, loss_weights, init_params)
         generator.cvae()
         self.train_loss_history = {'cvae': {'generator': {'G_BCE': [], 'G_L1': [], 'G_KL': []},
                                             'discriminator': {'D_Real': [], 'D_Fake': []}}}
+        self.encoder_optim = encoder_optim
 
-    def generator_step(self, batch, generator, discriminator, optimizer_g):
+    def generator_step(self, batch, generator, discriminator, optimizer_g, val_mode=False):
         """Generator optimization step.
 
         Args:
@@ -616,7 +684,12 @@ class cVAESolver(Solver):
         dxdy_pred = generator(xy_in, dxdy_in, seq_start_end, xy_out)
         xy_pred = relative_to_abs(dxdy_pred, xy_in[-1])
         xy_fake = torch.cat([xy_in, xy_pred], dim=0)
-        scores_fake = discriminator(xy_fake, seq_start_end)
+        if isinstance(discriminator, TrajectoryDiscriminator):
+            dxdy_out = batch['dxdy_out']
+            dxdy_fake = torch.cat([dxdy_in, dxdy_pred], dim=0)
+            scores_fake = discriminator(xy_fake, dxdy_fake, seq_start_end)
+        else:
+            scores_fake = discriminator(xy_fake, seq_start_end)
         target_fake = torch.ones_like(scores_fake).type(dtype) * random.uniform(0.7, 1.2)
 
         traj_loss = loss_fn_traj(dxdy_pred, dxdy_out)
@@ -624,10 +697,11 @@ class cVAESolver(Solver):
         kl_loss = loss_fn_kl(generator.mu, generator.logvar)
 
         loss = w_disc * disc_loss + w_traj * traj_loss + w_kl * kl_loss
-        optimizer_g.zero_grad()
-        loss.backward()
-        optimizer_g.step()
 
+        if not val_mode:
+            optimizer_g.zero_grad()
+            loss.backward()
+            optimizer_g.step()
         return disc_loss.item(), traj_loss.item(), kl_loss.item()
 
     def discriminator_step(self, batch, generator, discriminator, optimizer_d):
@@ -658,8 +732,15 @@ class cVAESolver(Solver):
         xy_fake = torch.cat([xy_in, xy_pred], dim=0)
         xy_real = torch.cat([xy_in, xy_out], dim=0)
 
-        scores_fake = discriminator(xy_fake, seq_start_end)
-        scores_real = discriminator(xy_real, seq_start_end)
+        if isinstance(discriminator, TrajectoryDiscriminator):
+            dxdy_out = batch['dxdy_out']
+            dxdy_real = torch.cat([dxdy_in, dxdy_out], dim=0)
+            dxdy_fake = torch.cat([dxdy_in, dxdy_pred], dim=0)
+            scores_fake = discriminator(xy_fake, dxdy_fake, seq_start_end)
+            scores_real = discriminator(xy_real, dxdy_real, seq_start_end)
+        else:
+            scores_fake = discriminator(xy_fake, seq_start_end)
+            scores_real = discriminator(xy_real, seq_start_end)
 
         target_real = torch.ones_like(scores_real).type(dtype) * random.uniform(0.7, 1.2)
         target_fake = torch.zeros_like(scores_fake).type(dtype) * random.uniform(0., 0.3)
@@ -677,30 +758,29 @@ class cVAESolver(Solver):
 
 class BicycleSolver(BaseSolver):
 
-    def __init__(self, generator, discriminator, optim=torch.optim.Adam, optims_args=None,
+    def __init__(self, generator, discriminator, optim=torch.optim.Adam, encoder_optim=torch.optim.SGD, optims_args=None,
                  loss_fns=None, loss_weights=None, init_params=False):
         super().__init__(generator, discriminator, optim, optims_args, loss_fns, loss_weights, init_params)
 
-        self.cvaesolver = cVAESolver(generator, discriminator, optim, optims_args, loss_fns, loss_weights, init_params)
-        self.clrsolver = cLRSolver(generator, discriminator, optim, optims_args, loss_fns, loss_weights, init_params)
-        self.train_loss_history = {'clr': {'generator': {'G_BCE': [-1], 'G_L1': []},
-                                           'discriminator': {'D_Real': [], 'D_Fake': []}},
-                                   'cvae': {'generator': {'G_BCE': [], 'G_L1': [], 'G_KL': []},
-                                            'discriminator': {'D_Real': [], 'D_Fake': []}}}
+        self.cvaesolver = cVAESolver(generator, discriminator, optim, encoder_optim, optims_args, loss_fns, loss_weights, init_params)
+        self.clrsolver = cLRSolver(generator, discriminator, optim, encoder_optim, optims_args, loss_fns, loss_weights, init_params)
+        self.train_loss_history = {'generator': {'G_BCE': [], 'G_L1': [], 'G_L1z': [], 'G_KL': []},
+                                   'discriminator': {'D_Real': [], 'D_Fake': []}}
+        self.encoder_optim = encoder_optim
 
     def generator_step(self, batch, generator, discriminator, optimizer_g):
         if self.init:
-            self.optimizer_g = self.optim([{'params': generator.generator.parameters()},
-                                      {'params': generator.encoder.parameters()}],
-                                     **self.optims_args['generator'])
+            self.optimizer_g = self.optim(generator.generator.parameters(), **self.optims_args['generator'])
+            self.cvaesolver.optimizer_e = self.optimizer_e
+            self.clrsolver.optimizer_e = self.optimizer_e
             self.init=False
         if generator.mode == 'clr':
-            self.optimizer_g.param_groups[1]['lr'] = 0.
+            self.optimizer_e.param_groups[0]['lr'] = 0.
             bce_loss, norm_loss = self.clrsolver.generator_step(batch, generator, discriminator, optimizer_g)
             losses = (bce_loss, norm_loss)
             generator.cvae()
         elif generator.mode == 'cvae':
-            self.optimizer_g.param_groups[1]['lr'] = self.optimizer_g.defaults['lr']
+            self.optimizer_e.param_groups[0]['lr'] = self.optimizer_e.defaults['lr']
             bce_loss, norm_loss, kl_loss = self.cvaesolver.generator_step(batch, generator, discriminator, optimizer_g)
             losses = (bce_loss, norm_loss, kl_loss)
             generator.clr()
@@ -726,67 +806,38 @@ class BicycleSolver(BaseSolver):
 
         Note: Here we can store everything that we need for evaluation and
             save states and models to the hard drive.
-        TODO: Implement a mechanism that saves the models whenever accuracy increased.
+        TODO: Only G_L1 differ per cvae, clr. Implement rather G_L1 and G_L1z
         """
         if self.generator.mode == 'cvae':
-            self.train_loss_history['clr']['generator']['G_BCE'].append(losses_g[0])
-            self.train_loss_history['clr']['generator']['G_L1'].append(losses_g[1])
-            self.train_loss_history['clr']['discriminator']['D_Fake'].append(losses_d[0])
-            self.train_loss_history['clr']['discriminator']['D_Real'].append(losses_d[1])
+            self.train_loss_history['generator']['G_L1'].append(losses_g[1])
         elif self.generator.mode == 'clr':
-            self.train_loss_history['cvae']['generator']['G_BCE'].append(losses_g[0])
-            self.train_loss_history['cvae']['generator']['G_L1'].append(losses_g[1])
-            self.train_loss_history['cvae']['generator']['G_KL'].append(losses_g[2])
-            self.train_loss_history['cvae']['discriminator']['D_Fake'].append(losses_d[0])
-            self.train_loss_history['cvae']['discriminator']['D_Real'].append(losses_d[1])
+            self.train_loss_history['generator']['G_L1z'].append(losses_g[1])
+            self.train_loss_history['generator']['G_KL'].append(losses_g[2])
+        self.train_loss_history['generator']['G_BCE'].append(losses_g[0])
+        self.train_loss_history['discriminator']['D_Fake'].append(losses_d[0])
+        self.train_loss_history['discriminator']['D_Real'].append(losses_d[1])
 
     def _pprint(self, epochs, init=False):
         """Pretty prints the losses."""
         if init:
             msg = f"\n{'Generator Losses':>23}"
-            msg += 'Discriminator Losses'.rjust(len(self.train_loss_history['cvae']['generator']) * 10 + 4)
+            msg += 'Discriminator Losses'.rjust(len(self.train_loss_history['generator']) * 10 + 4)
             msg += '\nEpochs '
-            for type in self.train_loss_history['cvae']['generator']:
+            for type in self.train_loss_history['generator']:
                 msg += f'{type:<10}'
-            for type in self.train_loss_history['cvae']['discriminator']:
+            for type in self.train_loss_history['discriminator']:
                 msg += f'{type:<10}'
         else:
             msg = f'{epochs:<7.0f}'
-            for type, loss in self.train_loss_history['clr']['generator'].items():
-                msg += f'{loss[-1]:<10.3f}' if loss else ''
-            msg += ''.rjust(10)
-            for type, loss in self.train_loss_history['clr']['discriminator'].items():
-                msg += f'{loss[-1]:<10.3f}' if loss else ''
-            msg += f'\t cLR\n'
-            msg += f'{epochs:<7.0f}'
-            for type, loss in self.train_loss_history['cvae']['generator'].items():
-                msg += f'{loss[-1]:<10.3f}' if loss else ''
-            msg += ''
-            for type, loss in self.train_loss_history['cvae']['discriminator'].items():
-                msg += f'{loss[-1]:<10.3f}' if loss else ''
-            msg += f'\t cVAE'
+            for type, loss in self.train_loss_history['generator'].items():
+                msg += f'{loss[-1]:<10.3f}' if loss else ''.rjust(10)
+            #msg += ''.rjust(10)
+            for type, loss in self.train_loss_history['discriminator'].items():
+                msg += f'{loss[-1]:<10.3f}' if loss else ''.rjust(10)
         print(msg)
 
-    def load_checkpoint(self, model_path, init_optim=False):
-        #print('Restoring from checkpoint')
-        if not cuda:
-            checkpoint = torch.load(model_path, map_location='cpu')
-        else:
-            checkpoint = torch.load(model_path)
-        self.generator.load_state_dict(checkpoint['g_state'])
-        self.discriminator.load_state_dict(checkpoint['d_state'])
-        self.optimizer_g = self.optim([{'params': generator.generator.parameters()},
-                                       {'params': generator.encoder.parameters()}],
+    def init_optimizers(self):
+        self.optimizer_g = self.optim([{'params': self.generator.generator.parameters()},
+                                       {'params': self.generator.encoder.parameters()}],
                                       **self.optims_args['generator'])
-        if init_optim:
-            self.optimizer_g = self.optim([{'params': generator.generator.parameters()},
-                                           {'params': generator.encoder.parameters()}],
-                                          **self.optims_args['generator'])
-            self.optimizer_d = self.optim(self.discriminator.parameters(), **self.optims_args['discriminator'])
-
-            self.optimizer_g.load_state_dict(checkpoint['g_optim_state'])
-            self.optimizer_d.load_state_dict(checkpoint['d_optim_state'])
-        self.train_loss_history = checkpoint['train_loss_history']
-        total_epochs = checkpoint['epochs']
-        self.init = False
-        return total_epochs
+        self.optimizer_d = self.optim(self.discriminator.parameters(), **self.optims_args['discriminator'])
