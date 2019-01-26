@@ -149,10 +149,10 @@ class Visualization(Evaluation):
         if isinstance(scenes, list):
             scenes_list = scenes
             num_scenes = len(scenes)
-        elif not scenes:
+        elif not scenes: #None: plot all
             num_scenes = len(output['xy_in'])
             scenes_list = list(range(num_scenes))
-        else:
+        else: #int: plot int number of random scenes
             num_scenes = scenes
             scenes_list = np.random.randint(len(output['xy_in']), size=num_scenes)
 

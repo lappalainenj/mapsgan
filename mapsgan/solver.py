@@ -90,7 +90,7 @@ class BaseSolver:
         return total_epochs
 
     def train(self, loader, epochs, checkpoint_every=1, print_every=False, steps={'generator': 1, 'discriminator': 1},
-              save_model=False, model_name='', save_every=1000, restore_checkpoint_from=None):
+              save_model=False, model_name='', save_every=1000, val_every=False, testloader=None, restore_checkpoint_from=None):
         """Trains the GAN.
 
         Args:
@@ -119,6 +119,8 @@ class BaseSolver:
         self.discriminator.train()
         if print_every:
             self._pprint(epochs, init=self.init)
+        if val_every:
+            self.validation(init=self.init)
         while epochs:
             gsteps = steps['generator']
             dsteps = steps['discriminator']
@@ -137,8 +139,11 @@ class BaseSolver:
             if print_every and (epochs % print_every == 0):
                 self._pprint(epochs)
 
+            if val_every and (epochs % val_every == 0):
+                self.validation(loader=testloader)
+
             trained_epochs += 1
-            if (epochs % save_every == 0) & save_model:
+            if save_model and (epochs % save_every == 0):
                 self.save_checkpoint(trained_epochs, model_name)
 
             epochs -= 1
@@ -225,6 +230,36 @@ class BaseSolver:
                 out['xy_pred'].append(xy_pred[:, start:end].cpu().detach().numpy())
         return out
 
+    def validation(self, loader=None, init=False):
+        if init:
+            if hasattr(self.generator, 'mode'):
+            self.train_loss_history.update({'validation': {}})
+        else:
+            self.generator.eval()
+
+            losses_g=[]
+            losses_list = [[],[],[]]
+            for batch in loader:
+                losses = self.generator_step(batch, self.generator, self.discriminator, self.optimizer_g, val_mode=True)
+                for i, l in enumerate(losses):
+                    losses_list[i].append(l)
+            for l in losses_list: # mean loss over batches
+                if len(l) != 0: losses_g.append(sum(l)/len(l))
+
+            # TODO: DIVERSITY SCORES
+            # TODO: pretty print
+            if hasattr(self.generator, 'mode'):
+                if self.generator.mode == 'clr':
+                    self.train_loss_history['validation']['clr']['G_BCE'].append(losses_g[0])
+                    self.train_loss_history['validation']['clr']['G_L1'].append(losses_g[1])
+                elif self.generator.mode == 'cvae':
+                    self.train_loss_history['validation']['cvae']['G_BCE'].append(losses_g[0])
+                    self.train_loss_history['validation']['cvae']['G_L1'].append(losses_g[1])
+                    self.train_loss_history['validation']['cvae']['G_KL'].append(losses_g[2])
+            else:
+                self.train_loss_history['validation']['G_BCE'].append(losses_g[0])
+                self.train_loss_history['validation']['G_L1'].append(losses_g[1])
+            self.generator.train()
 
 
     def _checkpoint(self, losses_g, losses_d):
@@ -297,7 +332,7 @@ class Solver(BaseSolver):
                  loss_weights=None, init_params=False):
         super().__init__(generator, discriminator, optim, optims_args, loss_fns, loss_weights, init_params)
 
-    def generator_step(self, batch, generator, discriminator, optimizer_g):
+    def generator_step(self, batch, generator, discriminator, optimizer_g, val_mode=False):
         """Generator optimization step.
 
         Args:
@@ -333,9 +368,11 @@ class Solver(BaseSolver):
         disc_loss = loss_fn_disc(scores_fake, target_fake)
 
         loss = w_disc * disc_loss + w_traj * traj_loss
-        optimizer_g.zero_grad()
-        loss.backward()
-        optimizer_g.step()
+
+        if not val_mode:
+            optimizer_g.zero_grad()
+            loss.backward()
+            optimizer_g.step()
 
         return disc_loss.item(), traj_loss.item()
 
@@ -386,6 +423,7 @@ class Solver(BaseSolver):
         disc_loss_fake = loss_fn_disc(scores_fake, target_fake)
 
         loss = disc_loss_fake + disc_loss_real
+
         optimizer_d.zero_grad()
         loss.backward()
         optimizer_d.step()
@@ -406,7 +444,7 @@ class SGANSolver(BaseSolver):
         super().__init__(generator, discriminator, optim, optims_args, loss_fns, loss_weights, init_params)
         self.args = experiment
 
-    def generator_step(self, batch, generator, discriminator, optimizer_g):
+    def generator_step(self, batch, generator, discriminator, optimizer_g, val_mode=False):
         """Generator optimization step.
 
         Args:
@@ -460,12 +498,14 @@ class SGANSolver(BaseSolver):
         disc_loss = loss_fn_disc(scores_fake, target_fake)
 
         loss = w_disc * disc_loss + l2_loss
-        optimizer_g.zero_grad()
-        loss.backward()
-        if self.args.clip:
-            # QUESTION: Is this a Lipschitz constraining method as in W-GAN?
-            nn.utils.clip_grad_norm_(generator.parameters(), self.args.clip)
-        optimizer_g.step()
+
+        if not val_mode:
+            optimizer_g.zero_grad()
+            loss.backward()
+            if self.args.clip:
+                # QUESTION: Is this a Lipschitz constraining method as in W-GAN?
+                nn.utils.clip_grad_norm_(generator.parameters(), self.args.clip)
+            optimizer_g.step()
 
         return disc_loss.item(), l2_loss.item()
 
@@ -536,7 +576,7 @@ class cLRSolver(Solver):
         self.train_loss_history = {'clr': {'generator': {'G_BCE': [], 'G_L1': []},
                                            'discriminator': {'D_Real': [], 'D_Fake': []}}}
 
-    def generator_step(self, batch, generator, discriminator, optimizer_g):
+    def generator_step(self, batch, generator, discriminator, optimizer_g, val_mode=False):
         """Generator optimization step.
 
         Args:
@@ -578,9 +618,11 @@ class cLRSolver(Solver):
         disc_loss = loss_fn_disc(scores_fake, target_fake)
 
         loss = w_disc * disc_loss + w_z * z_loss
-        optimizer_g.zero_grad()
-        loss.backward()
-        optimizer_g.step()
+
+        if not val_mode:
+            optimizer_g.zero_grad()
+            loss.backward()
+            optimizer_g.step()
 
         return disc_loss.item(), z_loss.item()
 
@@ -599,7 +641,7 @@ class cVAESolver(Solver):
         self.train_loss_history = {'cvae': {'generator': {'G_BCE': [], 'G_L1': [], 'G_KL': []},
                                             'discriminator': {'D_Real': [], 'D_Fake': []}}}
 
-    def generator_step(self, batch, generator, discriminator, optimizer_g):
+    def generator_step(self, batch, generator, discriminator, optimizer_g, val_mode=False):
         """Generator optimization step.
 
         Args:
@@ -644,9 +686,11 @@ class cVAESolver(Solver):
         kl_loss = loss_fn_kl(generator.mu, generator.logvar)
 
         loss = w_disc * disc_loss + w_traj * traj_loss + w_kl * kl_loss
-        optimizer_g.zero_grad()
-        loss.backward()
-        optimizer_g.step()
+
+        if not val_mode:
+            optimizer_g.zero_grad()
+            loss.backward()
+            optimizer_g.step()
 
         return disc_loss.item(), traj_loss.item(), kl_loss.item()
 
