@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+import numpy as np
 
 def relative_to_abs(rel_traj, start_pos):
     """Given the initial positions, computes the absolute trajectory from displacements.
@@ -132,7 +133,7 @@ def cos_sequence(seq):
     for i, s1 in enumerate(seq):
         for j, s2 in enumerate(seq):
             distance[i, j] = 1 - cos(s1.flatten(), s2.flatten())
-    return distance  # [ind]
+    return distance[ind]
 
 
 def cos_scene(scene):
@@ -145,4 +146,4 @@ def cos_scene(scene):
     for seq in scene:
         seq = torch.Tensor(seq)
         distances.append(cos_sequence(seq).sum())
-    return sum(distances)
+    return sum(distances).item()

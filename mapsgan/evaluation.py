@@ -164,7 +164,10 @@ class Visualization(Evaluation):
         ymax = np.max([np.max(seq[:, :, 1]) for scene in output.values() for seq in scene]) + 0.1
         xmin = np.min([np.min(seq[:, :, 0]) for scene in output.values() for seq in scene]) - 0.1
         xmax = np.max([np.max(seq[:, :, 0]) for scene in output.values() for seq in scene]) + 0.1
-
+        if xlim:
+            xmin, xmax = xlim
+        if ylim:
+            ymin, ymax = ylim
         # sns.set_context('poster')
         fig = self.plot.init_figure(figsize)
         max_a = 0
@@ -216,13 +219,16 @@ class Visualization(Evaluation):
         """
         losses = loss_history['generator']
         losses.update(loss_history['discriminator'])
+        keyswitch = {'D_real': 'D_Real', 'D_fake': 'D_Fake', 'G_gan': 'G_BCE', 'G_norm': 'G_L1',
+                     'G_BCE': 'G_BCE', 'G_L1': 'G_L1', 'G_KL': 'G_KL', 'D_Real':'D_Real', 'D_Fake':'D_Fake',
+                     'G_L1z':'G_L1z'}
         if not types:
             types = losses.keys()
-        losses = {type: loss for type, loss in losses.items() if type in types}  # filter out types
+        losses = {keyswitch[type]:loss for type, loss in losses.items() if type in types}  # filter out types
         num_axes = len(losses)
         fig = self.plot.init_figure(figsize)
         for i, (type, loss) in enumerate(losses.items()):
-            ax = self.plot.init_subplot(type, tot_tup=(1, num_axes), sp_tup=(0, i))
+            ax = self.plot.init_subplot(keyswitch[type], tot_tup=(1, num_axes), sp_tup=(0, i))
             ax.plot(loss)
             ax.set_xlabel('Checkpoints')
             #ax.set_yticks([])
