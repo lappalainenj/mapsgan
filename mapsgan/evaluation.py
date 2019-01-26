@@ -148,7 +148,7 @@ class Visualization(Evaluation):
         """
         if isinstance(scenes, list):
             scenes_list = scenes
-            num_scenes = len(scenes)
+            num_scenes = len(scenes)+1
         elif not scenes: #None: plot all
             num_scenes = len(output['xy_in'])
             scenes_list = list(range(num_scenes))
@@ -164,10 +164,7 @@ class Visualization(Evaluation):
         ymax = np.max([np.max(seq[:, :, 1]) for scene in output.values() for seq in scene]) + 0.1
         xmin = np.min([np.min(seq[:, :, 0]) for scene in output.values() for seq in scene]) - 0.1
         xmax = np.max([np.max(seq[:, :, 0]) for scene in output.values() for seq in scene]) + 0.1
-        if xlim:
-            xmin, xmax = xlim
-        if ylim:
-            ymin, ymax = ylim
+
         # sns.set_context('poster')
         fig = self.plot.init_figure(figsize)
         max_a = 0
