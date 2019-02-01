@@ -2,6 +2,7 @@ from matplotlib import pyplot as plt
 import matplotlib.lines as mlines
 import seaborn as sns
 import numpy as np
+from mapsgan.utils import smooth_data
 from matplotlib.pyplot import cm
 
 class Evaluation:
@@ -233,3 +234,16 @@ class Visualization(Evaluation):
                 ax.set_ylabel('Loss (a.u.)')
         if figtitle:
             fig.suptitle(figtitle)
+
+    def loss_val(self, loss_history, smoothing=5, figsize = [16,4]):
+        losses = loss_history
+        keys = losses.keys()
+
+        plt.figure(figsize=figsize)
+        for i,k in enumerate(keys):
+            if losses[k]:
+                plt.subplot(1,len(keys),i+1)
+                plt.plot(smooth_data(losses[k], smoothing))
+                plt.title(k)
+        plt.show()
+
