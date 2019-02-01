@@ -242,7 +242,7 @@ class BaseSolver:
     def validation(self, loader=None, init=False):
         if init:
             if hasattr(self.generator, 'mode'):
-            self.train_loss_history.update({'validation': {}})
+                self.train_loss_history.update({'validation': {}})
         else:
             self.generator.eval()
 

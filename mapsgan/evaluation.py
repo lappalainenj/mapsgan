@@ -131,7 +131,7 @@ class Visualization(Evaluation):
     def __init__(self):
         pass
 
-    def trajectories(self, output, scenes = [2], legend=False, ground_truth=False):
+    def trajectories(self, output, scenes = [2], legend=False, ground_truth=False, input_truth=False, xlim=None, ylim=None):
         """
 
         Args:
@@ -148,7 +148,7 @@ class Visualization(Evaluation):
         """
         if isinstance(scenes, list):
             scenes_list = scenes
-            num_scenes = len(scenes)
+            num_scenes = len(scenes)+1
         elif not scenes: #None: plot all
             num_scenes = len(output['xy_in'])
             scenes_list = list(range(num_scenes))
@@ -183,8 +183,9 @@ class Visualization(Evaluation):
             ax.set_yticks([])
 
             for a in range(num_agents):
-                ax.plot( output['xy_in'][s][:, a, 0], output['xy_in'][s][:, a, 1],
-                         'o-', c=color[a%len(color)], markersize=5, label=f'Input Agent {a}')
+                if input_truth:
+                    ax.plot( output['xy_in'][s][:, a, 0], output['xy_in'][s][:, a, 1],
+                             'o-', c=color[a%len(color)], markersize=5, label=f'Input Agent {a}')
                 if ground_truth:
                     ax.plot( output['xy_out'][s][:, a, 0], output['xy_out'][s][:, a, 1],
                              '.-', c=color[a%len(color)], markersize=5, label=f'Output Agent {a}')
