@@ -122,7 +122,7 @@ class BaseSolver:
         else:
             trained_epochs = 0
             self.init_optimizers()
-            print('Training new model')
+            #print('Training new model')
 
         self.generator.train()
         self.discriminator.train()

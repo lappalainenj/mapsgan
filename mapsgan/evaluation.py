@@ -131,7 +131,7 @@ class Visualization(Evaluation):
     def __init__(self):
         pass
 
-    def trajectories(self, output, scenes = [2], legend=False, ground_truth=False):
+    def trajectories(self, output, scenes = None, legend=False, ground_truth=False):
         """
 
         Args:
