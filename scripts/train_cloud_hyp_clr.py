@@ -6,9 +6,9 @@ import time
 import datetime
 
 mode = 'clr'
-fileprefix = '/cloud/hyp_clr'
+fileprefix_ = '/cloud/hyp_clr'
 
-list_lr = [1e-2, 1e-4, 1e-6, 1e-7]
+list_lr = [1e-2, 1e-4, 1e-6]
 
 if torch.cuda.is_available():
     print('Cuda is available')
@@ -26,6 +26,8 @@ for it, lr in enumerate(list_lr):
     lr_gen = lr
     lr_dis = lr
     lr_enc = lr
+
+    fileprefix = fileprefix_ + '_' + str(it)
 
     #print('Setting models...')
     generator = BicycleGenerator(generator=ToyGenerator, start_mode=mode)
