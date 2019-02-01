@@ -5,10 +5,11 @@ import numpy as np
 import time
 import os
 from pathlib import Path
-from mapsgan.utils import get_dtypes, relative_to_abs, init_weights, get_z_random
+from mapsgan.utils import get_dtypes, relative_to_abs, init_weights, get_z_random, cos_scene
 from mapsgan.losses import l2_loss as loss_fn_l2
 from mapsgan.losses import kl_loss as loss_fn_kl
 from sgan import TrajectoryGenerator, TrajectoryDiscriminator
+import time
 
 long_dtype, dtype = get_dtypes()  # dtype is either torch.FloatTensor or torch.cuda.FloatTensor
 cuda = torch.cuda.is_available()
@@ -202,6 +203,66 @@ class BaseSolver:
                 out['xy_pred'].append(xy_pred[:, start:end].cpu().detach().numpy())
         return out
 
+    def validation(self, loader=None, init=False):
+        # TODO: pretty print
+        if init:
+            self.train_loss_history.update({'validation': { 'generator': {'G_BCE': [], 'G_L1': [], 'G_L1z': [], 'G_KL': []},
+                                                            'discriminator': {'D_Real': [], 'D_Fake': []},
+                                                            'diversity': {'scene_cos': [], 'agent_interp': []} }})
+        else:
+            if hasattr(self.generator, 'mode'):
+                gen_mode = self.generator.mode
+            else:
+                gen_mode = False
+            self.generator.eval()
+
+            # Diversities
+            out = self.test(loader)
+            xy_pred = out['xy_pred']
+            xy_out = out['xy_out']
+            cosine_score_model = cos_scene(xy_pred) # norm_scene(xy_pred)
+            cosine_score_real = cos_scene(xy_out)
+            cosine_score_norm = cosine_score_model / cosine_score_real
+            self.train_loss_history['validation']['diversity']['scene_cos'].append(cosine_score_norm)
+
+            out = self.interpolate(loader, stepsize=0.9, scene=44)
+            num_steps = out['xy_pred'][0].shape[0]
+            num_agents = out['xy_pred'][0].shape[1]
+            num_coord = out['xy_pred'][0].shape[2]
+            num_z = len(out['xy_pred'])
+            agent_interp = [None] * num_agents
+            agent_array = np.zeros([num_steps, num_z, num_coord])
+            for agent in range(num_agents):
+                for z in range(num_z):
+                    agent_array[:, z, :] = out['xy_pred'][z][:, agent, :]
+                agent_interp[agent] = agent_array
+            cosine_score_model = cos_scene(agent_interp)  # norm_scene(xy_pred)
+            cosine_score_norm = cosine_score_model
+            self.train_loss_history['validation']['diversity']['agent_interp'].append(cosine_score_norm)
+
+            # Accuracies
+            losses_g=[]
+            losses_list = [[],[],[]]
+            for batch in loader:
+                losses = self.generator_step(batch, self.generator, self.discriminator, self.optimizer_g, val_mode=True)
+                for i, l in enumerate(losses):
+                    losses_list[i].append(l)
+            for l in losses_list: # mean loss over batches
+                if len(l) != 0: losses_g.append(sum(l)/len(l))
+
+            if gen_mode:
+                if gen_mode == 'clr':
+                    self.train_loss_history['validation']['generator']['G_BCE'].append(losses_g[0])
+                    self.train_loss_history['validation']['generator']['G_L1z'].append(losses_g[1])
+                elif gen_mode == 'cvae':
+                    self.train_loss_history['validation']['generator']['G_BCE'].append(losses_g[0])
+                    self.train_loss_history['validation']['generator']['G_L1'].append(losses_g[1])
+                    self.train_loss_history['validation']['generator']['G_KL'].append(losses_g[2])
+            else:
+                self.train_loss_history['validation']['generator']['G_BCE'].append(losses_g[0])
+                self.train_loss_history['validation']['generator']['G_L1'].append(losses_g[1])
+            self.generator.train()
+
     def interpolate(self, loader, scene=25, stepsize=0.2, seed=20, z_dim=8, load_checkpoint_from=None):
         torch.manual_seed(seed)
         if load_checkpoint_from is not None and os.path.isfile(load_checkpoint_from):
@@ -228,6 +289,10 @@ class BaseSolver:
         t=np.arange(0, 1.+stepsize, stepsize)
         z0 = get_z_random(xy_in.size(1), z_dim)
         z1 = get_z_random(xy_in.size(1), z_dim)
+        if cuda:
+            t = torch.from_numpy(t).cuda()
+            z0 = z0.cuda().double()
+            z1 = z1.cuda().double()
         for ti in t:
             z = z0 + ti*(z1-z0)
             dxdy_pred = self.generator(xy_in, dxdy_in, seq_start_end, user_noise=z)
@@ -238,42 +303,6 @@ class BaseSolver:
                 out['xy_out'].append(xy_out[:, start:end].cpu().numpy())
                 out['xy_pred'].append(xy_pred[:, start:end].cpu().detach().numpy())
         return out
-
-    def validation(self, loader=None, init=False):
-        if init:
-            self.train_loss_history.update({'validation': {'generator': {'G_BCE': [], 'G_L1': [], 'G_L1z': [], 'G_KL': []},
-                                                               'discriminator': {'D_Real': [], 'D_Fake': []} }})
-        else:
-            if hasattr(self.generator, 'mode'):
-                gen_mode = self.generator.mode
-            else:
-                gen_mode = False
-            self.generator.eval()
-
-            losses_g=[]
-            losses_list = [[],[],[]]
-            for batch in loader:
-                losses = self.generator_step(batch, self.generator, self.discriminator, self.optimizer_g, val_mode=True)
-                for i, l in enumerate(losses):
-                    losses_list[i].append(l)
-            for l in losses_list: # mean loss over batches
-                if len(l) != 0: losses_g.append(sum(l)/len(l))
-
-            # TODO: DIVERSITY SCORES
-            # TODO: pretty print
-            if gen_mode:
-                if gen_mode == 'clr':
-                    self.train_loss_history['validation']['generator']['G_BCE'].append(losses_g[0])
-                    self.train_loss_history['validation']['generator']['G_L1z'].append(losses_g[1])
-                elif gen_mode == 'cvae':
-                    self.train_loss_history['validation']['generator']['G_BCE'].append(losses_g[0])
-                    self.train_loss_history['validation']['generator']['G_L1'].append(losses_g[1])
-                    self.train_loss_history['validation']['generator']['G_KL'].append(losses_g[2])
-            else:
-                self.train_loss_history['validation']['generator']['G_BCE'].append(losses_g[0])
-                self.train_loss_history['validation']['generator']['G_L1'].append(losses_g[1])
-            self.generator.train()
-
 
     def _checkpoint(self, losses_g, losses_d):
         """Checkpoint during training.
