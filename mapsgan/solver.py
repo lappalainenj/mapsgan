@@ -66,7 +66,7 @@ class BaseSolver:
                       'd_state': self.discriminator.state_dict(),
                       'g_optim_state': self.optimizer_g.state_dict(),
                       'd_optim_state': self.optimizer_d.state_dict(),
-                      'e_optim_state': e_optim_state,
+                      'e_optim_state': self.e_optim_state,
                       'train_loss_history': self.train_loss_history}
         self.model_str = 'models/' + model_name + '_' + time.strftime("%Y%m%d-%H%M%S") + '_epoch_' + str(trained_epochs)
         self.model_path = root_path / self.model_str
@@ -93,8 +93,8 @@ class BaseSolver:
             self.init_optimizers()
             self.optimizer_g.load_state_dict(checkpoint['g_optim_state'])
             self.optimizer_d.load_state_dict(checkpoint['d_optim_state'])
-        if self.encoder_optim:
-            self.optimizer_e.load_state_dict(checkpoint['e_optim_state'])
+        #if self.encoder_optim:
+        #    self.optimizer_e.load_state_dict(checkpoint['e_optim_state'])
         self.train_loss_history = checkpoint['train_loss_history']
         total_epochs = checkpoint['epochs']
         return total_epochs
