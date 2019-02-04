@@ -179,8 +179,8 @@ class Visualization(Evaluation):
             ax = self.plot.init_subplot(type, tot_tup=(gridheight, gridwidth), sp_tup=(int(i // gridwidth), int(i % gridwidth)))
             ax.set_xlim([xmin, xmax])
             ax.set_ylim([ymin, ymax])
-            ax.set_xticks([])
-            ax.set_yticks([])
+            #ax.set_xticks([])
+            #ax.set_yticks([])
 
             for a in range(num_agents):
                 if input_truth:

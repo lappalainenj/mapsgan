@@ -835,9 +835,3 @@ class BicycleSolver(BaseSolver):
             for type, loss in self.train_loss_history['discriminator'].items():
                 msg += f'{loss[-1]:<10.3f}' if loss else ''.rjust(10)
         print(msg)
-
-    def init_optimizers(self):
-        self.optimizer_g = self.optim([{'params': self.generator.generator.parameters()},
-                                       {'params': self.generator.encoder.parameters()}],
-                                      **self.optims_args['generator'])
-        self.optimizer_d = self.optim(self.discriminator.parameters(), **self.optims_args['discriminator'])
