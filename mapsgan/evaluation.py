@@ -3,6 +3,8 @@ import matplotlib.lines as mlines
 import seaborn as sns
 import numpy as np
 from mapsgan.utils import smooth_data
+from matplotlib.pyplot import cm
+
 
 class Evaluation:
     """This class contains evaluation metrics."""
