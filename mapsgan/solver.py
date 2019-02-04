@@ -702,9 +702,11 @@ class cLRSolver(Solver):
         loss = w_disc * disc_loss + w_z * z_loss
 
         if not val_mode:
+            self.optimizer_e.zero_grad()
             optimizer_g.zero_grad()
             loss.backward()
             optimizer_g.step()
+            self.optimizer_e.step()
         return disc_loss.item(), z_loss.item()
 
 
@@ -774,9 +776,11 @@ class cVAESolver(Solver):
         loss = w_disc * disc_loss + w_traj * traj_loss + w_kl * kl_loss
 
         if not val_mode:
+            self.optimizer_e.zero_grad()
             optimizer_g.zero_grad()
             loss.backward()
             optimizer_g.step()
+            self.optimizer_e.step()
         return disc_loss.item(), traj_loss.item(), kl_loss.item()
 
     def discriminator_step(self, batch, generator, discriminator, optimizer_d):
@@ -850,12 +854,12 @@ class BicycleSolver(BaseSolver):
             self.clrsolver.optimizer_e = self.optimizer_e
             self.init=False
         if generator.mode == 'clr':
-            #self.optimizer_e.param_groups[0]['lr'] = 0.
+            self.optimizer_e.param_groups[0]['lr'] = 0.
             bce_loss, norm_loss = self.clrsolver.generator_step(batch, generator, discriminator, optimizer_g)
             losses = (bce_loss, norm_loss)
             generator.cvae()
         elif generator.mode == 'cvae':
-            #self.optimizer_e.param_groups[0]['lr'] = self.optimizer_e.defaults['lr']
+            self.optimizer_e.param_groups[0]['lr'] = self.optimizer_e.defaults['lr']
             bce_loss, norm_loss, kl_loss = self.cvaesolver.generator_step(batch, generator, discriminator, optimizer_g)
             losses = (bce_loss, norm_loss, kl_loss)
             generator.clr()

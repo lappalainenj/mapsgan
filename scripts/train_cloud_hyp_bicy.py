@@ -9,9 +9,9 @@ fileprefix_ = '/cloud/hyp_bicy'
 lr_gen = 1e-4
 lr_dis = 1e-4
 lr_enc = 1e-4
-list_weights = [ #{'disc': 5, 'traj': 10, 'kl': 0.01, 'z': 0.5},
-                 #{'disc': 10, 'traj': 10, 'kl': 10, 'z': 10},
-                 {'disc': 1, 'traj': 1, 'kl': 1, 'z': 1}]
+list_weights = [ {'disc': 1, 'traj': 1, 'kl': 1, 'z': 1},
+                 {'disc': 1, 'traj': 2, 'kl': 0.1, 'z': 0.5},
+                 {'disc': 5, 'traj': 10, 'kl': 0.01, 'z': 0.5}]
 
 
 #loss_weights={'disc': 1, 'traj': 2, 'kl': 0.1, 'z': 0.5}
@@ -24,7 +24,7 @@ else:
 print('Loading dataset...')
 experiment = experiments.ETH() # we store filepaths and arguments in here
 dataset, trainloader = data_loader(in_len=8, out_len=12, batch_size=64, num_workers=1,
-                                   path=experiment.test_dir, shuffle=True)
+                                   path=experiment.train_dir, shuffle=True)
 _, testloader = data_loader(in_len=8, out_len=12, batch_size=1, num_workers=1, path=experiment.test_dir,
                                   shuffle=False)
 
@@ -41,7 +41,7 @@ for it, loss_weights in enumerate(list_weights):
     print('\nIteration ', it + 1, '/', len(list_weights))
     print(datetime.datetime.now())
     time_start = time.time()
-    solver.train(trainloader, epochs = 5000, checkpoint_every=9, print_every=9, val_every=False, testloader=testloader,
+    solver.train(trainloader, epochs = 5000, checkpoint_every=9, print_every=99, val_every=9, testloader=testloader,
                  steps={'generator': 1, 'discriminator': 1},
                  save_model=True, model_name=fileprefix, save_every=10000, restore_checkpoint_from=None)
     time_elapsed = (time.time() - time_start)/60
