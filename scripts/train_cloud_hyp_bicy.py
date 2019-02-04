@@ -10,8 +10,8 @@ lr_gen = 1e-4
 lr_dis = 1e-4
 lr_enc = 1e-4
 list_weights = [ #{'disc': 5, 'traj': 10, 'kl': 0.01, 'z': 0.5},
-                 {'disc': 0.5, 'traj': 0.5, 'kl': 1, 'z': 1},
-                 {'disc': 1, 'traj': 2, 'kl': 0.1, 'z': 0.5}]
+                 #{'disc': 10, 'traj': 10, 'kl': 10, 'z': 10},
+                 {'disc': 1, 'traj': 1, 'kl': 1, 'z': 1}]
 
 
 #loss_weights={'disc': 1, 'traj': 2, 'kl': 0.1, 'z': 0.5}
@@ -43,7 +43,7 @@ for it, loss_weights in enumerate(list_weights):
     time_start = time.time()
     solver.train(trainloader, epochs = 5000, checkpoint_every=9, print_every=9, val_every=False, testloader=testloader,
                  steps={'generator': 1, 'discriminator': 1},
-                 save_model=False, model_name=fileprefix, save_every=10000, restore_checkpoint_from=None)
+                 save_model=True, model_name=fileprefix, save_every=10000, restore_checkpoint_from=None)
     time_elapsed = (time.time() - time_start)/60
     print('End of training. Duration: ' + str(time_elapsed) + 'mins\n-------------------------------------------------')
 print('End of loop')
