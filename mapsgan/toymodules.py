@@ -377,6 +377,8 @@ class BicycleGenerator(nn.Module):
                                        **kwargs)
         elif isinstance(generator, TrajectoryGenerator):
             self.generator = generator
+        else:
+            raise AssertionError("BicycleGenerator: no compatible generator instance given for initialization.")
 
         self.encoder = BicycleEncoder(embedding_dim=embedding_dim,
                                       h_dim=h_dim,
