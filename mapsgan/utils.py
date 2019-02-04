@@ -147,3 +147,23 @@ def cos_scene(scene):
         seq = torch.Tensor(seq)
         distances.append(cos_sequence(seq).sum())
     return sum(distances).item()
+
+def smooth_data(data, N):
+    """
+    Running average filtering for smoothing the plotted losses
+
+    Args:
+        data (list): one of the accuracy or diversity scores
+        N (int): size of the smoothing window in terms of data points
+
+    Returns:
+        moving_aves (list): smoothed scores
+
+    """
+    cumsum, moving_aves = [0], []
+    for i, x in enumerate(data, 1):
+        cumsum.append(cumsum[i-1] + x)
+        if i>=N:
+            moving_ave = (cumsum[i] - cumsum[i-N])/N
+            moving_aves.append(moving_ave)
+    return moving_aves
