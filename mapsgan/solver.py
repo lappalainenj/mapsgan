@@ -9,7 +9,6 @@ from mapsgan.utils import get_dtypes, relative_to_abs, init_weights, get_z_rando
 from mapsgan.losses import l2_loss as loss_fn_l2
 from mapsgan.losses import kl_loss as loss_fn_kl
 from sgan import TrajectoryGenerator, TrajectoryDiscriminator
-import time
 
 long_dtype, dtype = get_dtypes()  # dtype is either torch.FloatTensor or torch.cuda.FloatTensor
 cuda = torch.cuda.is_available()
@@ -93,8 +92,8 @@ class BaseSolver:
             self.init_optimizers()
             self.optimizer_g.load_state_dict(checkpoint['g_optim_state'])
             self.optimizer_d.load_state_dict(checkpoint['d_optim_state'])
-        if self.encoder_optim:
-            self.optimizer_e.load_state_dict(checkpoint['e_optim_state'])
+        #if self.encoder_optim:
+        #    self.optimizer_e.load_state_dict(checkpoint['e_optim_state'])
         self.train_loss_history = checkpoint['train_loss_history']
         total_epochs = checkpoint['epochs']
         return total_epochs
@@ -251,22 +250,25 @@ class BaseSolver:
             for l in losses_list: # mean loss over batches
                 if len(l) != 0: losses_g.append(sum(l)/len(l))
 
+            self.generator.train()
             if self.gen_mode:
                 if self.gen_mode == 'clr':
                     self.train_loss_history['validation']['generator']['G_BCE'].append(losses_g[0])
                     self.train_loss_history['validation']['generator']['G_L1z'].append(losses_g[1])
+                    self.generator.clr()
                 elif self.gen_mode == 'cvae':
                     self.train_loss_history['validation']['generator']['G_BCE'].append(losses_g[0])
                     self.train_loss_history['validation']['generator']['G_L1'].append(losses_g[1])
                     self.train_loss_history['validation']['generator']['G_KL'].append(losses_g[2])
+                    self.generator.cvae()
             else:
                 self.train_loss_history['validation']['generator']['G_BCE'].append(losses_g[0])
                 self.train_loss_history['validation']['generator']['G_L1'].append(losses_g[1])
-            self.generator.train()
-            self.generator.mode = self.gen_mode
+
+
+
 
     def interpolate(self, loader, scene=25, stepsize=0.2, seed=20, z_dim=8, load_checkpoint_from=None):
-        torch.manual_seed(seed)
         if load_checkpoint_from is not None and os.path.isfile(load_checkpoint_from):
             print('Loading from checkpoint')
             if not cuda:
@@ -277,6 +279,7 @@ class BaseSolver:
 
         if cuda:
             self.generator.cuda()
+        torch.manual_seed(seed)
 
         self.generator.eval()
         out = {'xy_in': [], 'xy_out': [], 'xy_pred': []}
@@ -305,6 +308,39 @@ class BaseSolver:
                 out['xy_out'].append(xy_out[:, start:end].cpu().numpy())
                 out['xy_pred'].append(xy_pred[:, start:end].cpu().detach().numpy())
         return out
+
+    # def sample_distribution(self, loader, scene = 65, seed=20, num_samples=5):
+    #     if cuda:
+    #         self.generator.cuda()
+    #
+    #     self.generator.eval()
+    #     out = {'xy_in': [], 'xy_out': [], 'xy_pred': []}
+    #     batch = list(iter(loader))[scene]
+    #     if cuda:
+    #         batch = {key: tensor.cuda() for key, tensor in batch.items()}
+    #     xy_in = batch['xy_in']
+    #     xy_out = batch['xy_out']
+    #     dxdy_in = batch['dxdy_in']
+    #     seq_start_end = batch['seq_start_end']
+    #
+    #     t=np.arange(0, 1.+stepsize, stepsize)
+    #     z0 = get_z_random(xy_in.size(1), z_dim)
+    #     z1 = get_z_random(xy_in.size(1), z_dim)
+    #     if cuda:
+    #         t = torch.from_numpy(t).cuda()
+    #         z0 = z0.cuda().double()
+    #         z1 = z1.cuda().double()
+    #     for ti in t:
+    #         z = z0 + ti*(z1-z0)
+    #         dxdy_pred = self.generator(xy_in, dxdy_in, seq_start_end, user_noise=z)
+    #         xy_pred = relative_to_abs(dxdy_pred, xy_in[-1])
+    #         for seq in seq_start_end:
+    #             start, end = seq
+    #             out['xy_in'].append(xy_in[:, start:end].cpu().numpy())
+    #             out['xy_out'].append(xy_out[:, start:end].cpu().numpy())
+    #             out['xy_pred'].append(xy_pred[:, start:end].cpu().detach().numpy())
+    #     return out
+
 
     def _checkpoint(self, losses_g, losses_d):
         """Checkpoint during training.
@@ -727,6 +763,7 @@ class cVAESolver(Solver):
         target_fake = torch.ones_like(scores_fake).type(dtype) * random.uniform(0.7, 1.2)
 
         if val_mode:
+            generator.z_random = get_z_random(xy_in.size(1), generator.z_dim)
             z_encoded, generator.mu, generator.logvar = generator.encoder(xy_out)
 
         traj_loss = loss_fn_traj(dxdy_pred, dxdy_out)
@@ -812,12 +849,12 @@ class BicycleSolver(BaseSolver):
             self.clrsolver.optimizer_e = self.optimizer_e
             self.init=False
         if generator.mode == 'clr':
-            self.optimizer_e.param_groups[0]['lr'] = 0.
+            #self.optimizer_e.param_groups[0]['lr'] = 0.
             bce_loss, norm_loss = self.clrsolver.generator_step(batch, generator, discriminator, optimizer_g)
             losses = (bce_loss, norm_loss)
             generator.cvae()
         elif generator.mode == 'cvae':
-            self.optimizer_e.param_groups[0]['lr'] = self.optimizer_e.defaults['lr']
+            #self.optimizer_e.param_groups[0]['lr'] = self.optimizer_e.defaults['lr']
             bce_loss, norm_loss, kl_loss = self.cvaesolver.generator_step(batch, generator, discriminator, optimizer_g)
             losses = (bce_loss, norm_loss, kl_loss)
             generator.clr()
@@ -880,6 +917,8 @@ class BicycleSolver(BaseSolver):
             for type, loss in self.train_loss_history['discriminator'].items():
                 msg += f'{loss[-1]:<10.3f}' if loss else ''.rjust(10)
         print(msg)
+        #print(self.generator.mode)
+
 
     # def init_optimizers(self):
     #     self.optimizer_g = self.optim([{'params': self.generator.generator.parameters()},
