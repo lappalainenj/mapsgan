@@ -2,6 +2,7 @@ from matplotlib import pyplot as plt
 import matplotlib.lines as mlines
 import seaborn as sns
 import numpy as np
+from mapsgan.utils import smooth_data
 from matplotlib.pyplot import cm
 
 class Evaluation:
@@ -131,7 +132,7 @@ class Visualization(Evaluation):
     def __init__(self):
         pass
 
-    def trajectories(self, output, scenes = [2], legend=False, ground_truth=False):
+    def trajectories(self, output, scenes = None, legend=False, ground_truth=False):
         """
 
         Args:
@@ -148,7 +149,7 @@ class Visualization(Evaluation):
         """
         if isinstance(scenes, list):
             scenes_list = scenes
-            num_scenes = len(scenes)
+            num_scenes = len(scenes)+1
         elif not scenes: #None: plot all
             num_scenes = len(output['xy_in'])
             scenes_list = list(range(num_scenes))
@@ -164,10 +165,7 @@ class Visualization(Evaluation):
         ymax = np.max([np.max(seq[:, :, 1]) for scene in output.values() for seq in scene]) + 0.1
         xmin = np.min([np.min(seq[:, :, 0]) for scene in output.values() for seq in scene]) - 0.1
         xmax = np.max([np.max(seq[:, :, 0]) for scene in output.values() for seq in scene]) + 0.1
-        if xlim:
-            xmin, xmax = xlim
-        if ylim:
-            ymin, ymax = ylim
+
         # sns.set_context('poster')
         fig = self.plot.init_figure(figsize)
         max_a = 0
@@ -236,3 +234,16 @@ class Visualization(Evaluation):
                 ax.set_ylabel('Loss (a.u.)')
         if figtitle:
             fig.suptitle(figtitle)
+
+    def loss_val(self, loss_history, smoothing=5, figsize = [16,4]):
+        losses = loss_history
+        keys = losses.keys()
+
+        plt.figure(figsize=figsize)
+        for i,k in enumerate(keys):
+            if losses[k]:
+                plt.subplot(1,len(keys),i+1)
+                plt.plot(smooth_data(losses[k], smoothing))
+                plt.title(k)
+        plt.show()
+
