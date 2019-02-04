@@ -148,6 +148,40 @@ def cos_scene(scene):
         distances.append(cos_sequence(seq).sum())
     return sum(distances).item()
 
+
+def get_cosine_score(output):
+    """Get the normalized cosine score."""
+    return cos_scene(output['xy_pred']) / cos_scene(output['xy_out'])
+
+
+def get_collisions(output, thresh=0.5):
+    """Computes collision on array of (seq_len, num_agents, num_chords)."""
+    from scipy.spatial.distance import pdist, squareform
+    collisions = 0
+    xy_pred = output['xy_pred']
+    for scene in xy_pred:
+        for i, step_na_xy in enumerate(scene):
+            dm = squareform(pdist(step_na_xy))  # step is (num_agents, dimensions xy)
+            ind = np.triu_indices(dm.shape[0], k=1)
+            for distance in dm[ind]:
+                if distance < thresh:
+                    collisions += 1
+    return collisions
+
+
+def get_average_fde(output):
+    """Get the average displacement error."""
+    pred = output['xy_pred']
+    gt = output['xy_out']
+    diff = 0
+    for i, p in enumerate(pred):
+        last_p = p[-1]
+        last_gt = gt[i][-1]
+        diff += np.linalg.norm((last_p-last_gt), axis=1).mean()
+    diff /= len(pred)
+    return diff
+
+
 def smooth_data(data, N):
     """
     Running average filtering for smoothing the plotted losses
@@ -167,3 +201,32 @@ def smooth_data(data, N):
             moving_ave = (cumsum[i] - cumsum[i-N])/N
             moving_aves.append(moving_ave)
     return moving_aves
+
+
+def get_sgan_generator(checkpoint, cuda=False):
+    from attrdict import AttrDict
+    from sgan import TrajectoryGenerator
+    args = AttrDict(checkpoint['args'])
+    generator = TrajectoryGenerator(
+        obs_len=args.obs_len,
+        pred_len=args.pred_len,
+        embedding_dim=args.embedding_dim,
+        encoder_h_dim=args.encoder_h_dim_g,
+        decoder_h_dim=args.decoder_h_dim_g,
+        mlp_dim=args.mlp_dim,
+        num_layers=args.num_layers,
+        noise_dim=args.noise_dim,
+        noise_type=args.noise_type,
+        noise_mix_type=args.noise_mix_type,
+        pooling_type=args.pooling_type,
+        pool_every_timestep=args.pool_every_timestep,
+        dropout=args.dropout,
+        bottleneck_dim=args.bottleneck_dim,
+        neighborhood_size=args.neighborhood_size,
+        grid_size=args.grid_size,
+        batch_norm=args.batch_norm)
+    generator.load_state_dict(checkpoint['g_state'])
+    if cuda:
+        generator.cuda()
+    generator.train()
+    return generator
