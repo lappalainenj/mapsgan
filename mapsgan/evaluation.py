@@ -5,6 +5,7 @@ import numpy as np
 from mapsgan.utils import smooth_data
 from matplotlib.pyplot import cm
 
+
 class Evaluation:
     """This class contains evaluation metrics."""
     NotImplemented
@@ -132,7 +133,7 @@ class Visualization(Evaluation):
     def __init__(self):
         pass
 
-    def trajectories(self, output, scenes = None, legend=False, ground_truth=False):
+    def trajectories(self, output, scenes = [2], legend=False, ground_truth=False, input_truth=False, xlim=None, ylim=None):
         """
 
         Args:
@@ -177,12 +178,13 @@ class Visualization(Evaluation):
             ax = self.plot.init_subplot(type, tot_tup=(gridheight, gridwidth), sp_tup=(int(i // gridwidth), int(i % gridwidth)))
             ax.set_xlim([xmin, xmax])
             ax.set_ylim([ymin, ymax])
-            ax.set_xticks([])
-            ax.set_yticks([])
+            #ax.set_xticks([])
+            #ax.set_yticks([])
 
             for a in range(num_agents):
-                ax.plot( output['xy_in'][s][:, a, 0], output['xy_in'][s][:, a, 1],
-                         'o-', c=color[a%len(color)], markersize=5, label=f'Input Agent {a}')
+                if input_truth:
+                    ax.plot( output['xy_in'][s][:, a, 0], output['xy_in'][s][:, a, 1],
+                             'o-', c=color[a%len(color)], markersize=5, label=f'Input Agent {a}')
                 if ground_truth:
                     ax.plot( output['xy_out'][s][:, a, 0], output['xy_out'][s][:, a, 1],
                              '.-', c=color[a%len(color)], markersize=5, label=f'Output Agent {a}')
