@@ -5,7 +5,7 @@ import numpy as np
 import time
 import os
 from pathlib import Path
-from mapsgan.utils import get_dtypes, relative_to_abs, init_weights, get_z_random, cos_scene
+from mapsgan.utils import get_dtypes, relative_to_abs, init_weights, get_z_random, get_cosine_score, cos_scene, get_average_fde, get_collisions
 from mapsgan.losses import l2_loss as loss_fn_l2
 from mapsgan.losses import kl_loss as loss_fn_kl
 from sgan import TrajectoryGenerator, TrajectoryDiscriminator
@@ -59,6 +59,8 @@ class BaseSolver:
                                    'discriminator': {'D_Real': [], 'D_Fake': []}}
         self.encoder_optim=None
         self.optimizer_e=None
+        self.gen_mode=None
+        self.validate_acc=True
 
     def save_checkpoint(self, trained_epochs, model_name):
         e_optim_state = self.optimizer_e.state_dict() if self.encoder_optim else None
@@ -138,10 +140,10 @@ class BaseSolver:
             for batch in loader:
 
                 while dsteps:
-                    losses_d = self.discriminator_step(batch, self.generator, self.discriminator, self.optimizer_d)
+                    losses_d = self.discriminator_step(batch)
                     dsteps -= 1
                 while gsteps:
-                    losses_g = self.generator_step(batch, self.generator, self.discriminator, self.optimizer_g)
+                    losses_g = self.generator_step(batch)
                     gsteps -= 1
 
             if epochs % checkpoint_every == 0:
@@ -210,61 +212,63 @@ class BaseSolver:
         if init:
             self.train_loss_history.update({'validation': { 'generator': {'G_BCE': [], 'G_L1': [], 'G_L1z': [], 'G_KL': []},
                                                             'discriminator': {'D_Real': [], 'D_Fake': []},
-                                                            'diversity': {'scene_cos': [], 'agent_interp': []} }})
-        else:
-            if hasattr(self.generator, 'mode'):
-                self.gen_mode = self.generator.mode
-            else:
-                self.gen_mode = False
-            self.generator.eval()
+                                                            'diversity': {'scene_cos': [], 'agent_interp': []},
+                                                            'fde': [],
+                                                            'collisions':[]}})
+            return None
 
-            # Diversities
-            out = self.test(loader)
-            xy_pred = out['xy_pred']
-            xy_out = out['xy_out']
-            cosine_score_model = cos_scene(xy_pred) # norm_scene(xy_pred)
-            cosine_score_real = cos_scene(xy_out)
-            cosine_score_norm = cosine_score_model / cosine_score_real
-            self.train_loss_history['validation']['diversity']['scene_cos'].append(cosine_score_norm)
+        self.gen_mode = self.generator.mode if hasattr(self.generator, 'mode') else False
+        self.generator.eval()
 
-            out = self.interpolate(loader, stepsize=0.9, scene=44)
-            num_steps = out['xy_pred'][0].shape[0]
-            num_agents = out['xy_pred'][0].shape[1]
-            num_coord = out['xy_pred'][0].shape[2]
-            num_z = len(out['xy_pred'])
-            agent_interp = [None] * num_agents
-            agent_array = np.zeros([num_steps, num_z, num_coord])
-            for agent in range(num_agents):
-                for z in range(num_z):
-                    agent_array[:, z, :] = out['xy_pred'][z][:, agent, :]
-                agent_interp[agent] = agent_array
-            cosine_score_model = cos_scene(agent_interp)  # norm_scene(xy_pred)
-            cosine_score_norm = cosine_score_model
-            self.train_loss_history['validation']['diversity']['agent_interp'].append(cosine_score_norm)
+        # FDE, Collisions, Diversities
+        out = self.test(loader)
+        self.train_loss_history['validation']['fde'].append(get_average_fde(out))
+        self.train_loss_history['validation']['collisions'].append(get_collisions(out))
 
-            # Accuracies
-            losses_g=[]
-            losses_list = [[],[],[]]
-            for batch in loader:
-                losses = self.generator_step(batch, self.generator, self.discriminator, self.optimizer_g, val_mode=True)
-                for i, l in enumerate(losses):
-                    losses_list[i].append(l)
-            for l in losses_list: # mean loss over batches
-                if len(l) != 0: losses_g.append(sum(l)/len(l))
+        # Diversities
+        cosine_score_norm = get_cosine_score(out)
+        self.train_loss_history['validation']['diversity']['scene_cos'].append(cosine_score_norm)
 
-            if self.gen_mode:
-                if self.gen_mode == 'clr':
-                    self.train_loss_history['validation']['generator']['G_BCE'].append(losses_g[0])
-                    self.train_loss_history['validation']['generator']['G_L1z'].append(losses_g[1])
-                elif self.gen_mode == 'cvae':
-                    self.train_loss_history['validation']['generator']['G_BCE'].append(losses_g[0])
-                    self.train_loss_history['validation']['generator']['G_L1'].append(losses_g[1])
-                    self.train_loss_history['validation']['generator']['G_KL'].append(losses_g[2])
-            else:
+        out = self.interpolate(loader, stepsize=0.9, scene=44)
+        num_steps = out['xy_pred'][0].shape[0]
+        num_agents = out['xy_pred'][0].shape[1]
+        num_coord = out['xy_pred'][0].shape[2]
+        num_z = len(out['xy_pred'])
+        agent_interp = [None] * num_agents
+        agent_array = np.zeros([num_steps, num_z, num_coord])
+        for agent in range(num_agents):
+            for z in range(num_z):
+                agent_array[:, z, :] = out['xy_pred'][z][:, agent, :]
+            agent_interp[agent] = agent_array
+        cosine_score_model = cos_scene(agent_interp)  # norm_scene(xy_pred)
+        cosine_score_norm = cosine_score_model
+        self.train_loss_history['validation']['diversity']['agent_interp'].append(cosine_score_norm)
+
+        # Accuracies
+        losses_g=[]
+        losses_list = [[],[],[]]
+        for batch in loader:
+            losses = self.generator_step(batch, val_mode=True)
+            for i, l in enumerate(losses):
+                losses_list[i].append(l)
+        for l in losses_list: # mean loss over batches
+            if len(l) != 0: losses_g.append(sum(l)/len(l))
+
+        self.generator.train()
+        if self.gen_mode:
+            if self.gen_mode == 'clr':
+                self.train_loss_history['validation']['generator']['G_BCE'].append(losses_g[0])
+                self.train_loss_history['validation']['generator']['G_L1z'].append(losses_g[1])
+                self.generator.clr()
+            elif self.gen_mode == 'cvae':
                 self.train_loss_history['validation']['generator']['G_BCE'].append(losses_g[0])
                 self.train_loss_history['validation']['generator']['G_L1'].append(losses_g[1])
-            self.generator.train()
-            self.generator.mode = self.gen_mode
+                self.train_loss_history['validation']['generator']['G_KL'].append(losses_g[2])
+                self.generator.cvae()
+        else:
+            self.train_loss_history['validation']['generator']['G_BCE'].append(losses_g[0])
+            self.train_loss_history['validation']['generator']['G_L1'].append(losses_g[1])
+
 
     def interpolate(self, loader, scene=25, stepsize=0.2, seed=20, z_dim=8, load_checkpoint_from=None):
         torch.manual_seed(seed)
@@ -362,6 +366,12 @@ class BaseSolver:
         if self.encoder_optim:
             self.optimizer_e = self.encoder_optim(self.generator.encoder.parameters(), **self.optims_args['encoder'])
 
+    def generator_step(self, batch, val_mode=False):
+        return NotImplemented
+
+    def discriminator_step(self, batch, val_mode=False):
+        return NotImplemented
+
 class Solver(BaseSolver):
     """Implements a generator and a discriminator step.
 
@@ -372,19 +382,15 @@ class Solver(BaseSolver):
                  loss_weights=None, init_params=False):
         super().__init__(generator, discriminator, optim, optims_args, loss_fns, loss_weights, init_params)
 
-    def generator_step(self, batch, generator, discriminator, optimizer_g, val_mode=False):
+    def generator_step(self, batch, val_mode=False):
         """Generator optimization step.
 
         Args:
             batch: Batch from the data loader.
-            generator: Generator module.
-            discriminator: Discriminator module.
-            optimizer_g: Generator optimizer.
 
         Returns:
             discriminator loss on fake
             norm loss on trajectory
-            total generator loss
         """
         if cuda:
             batch = {key: tensor.cuda() for key, tensor in batch.items()}
@@ -398,10 +404,10 @@ class Solver(BaseSolver):
         w_disc = self.loss_weights['disc']
         w_traj = self.loss_weights['traj']
 
-        dxdy_pred = generator(xy_in, dxdy_in, seq_start_end)
+        dxdy_pred = self.generator(xy_in, dxdy_in, seq_start_end)
         xy_pred = relative_to_abs(dxdy_pred, xy_in[-1])
         xy_fake = torch.cat([xy_in, xy_pred], dim=0)
-        scores_fake = discriminator(xy_fake, seq_start_end)
+        scores_fake = self.discriminator(xy_fake, seq_start_end)
         target_fake = torch.ones_like(scores_fake).type(dtype) * random.uniform(0.7, 1.2)
 
         traj_loss = loss_fn_traj(dxdy_pred, dxdy_out)  # IMPORTANT: Indeed SGAN compares displacements!
@@ -410,25 +416,21 @@ class Solver(BaseSolver):
         loss = w_disc * disc_loss + w_traj * traj_loss
 
         if not val_mode:
-            optimizer_g.zero_grad()
+            self.optimizer_g.zero_grad()
             loss.backward()
-            optimizer_g.step()
+            self.optimizer_g.step()
 
         return disc_loss.item(), traj_loss.item()
 
-    def discriminator_step(self, batch, generator, discriminator, optimizer_d):
+    def discriminator_step(self, batch):
         """Discriminator optimization step.
 
         Args:
             batch: Batch from the data loader.
-            generator: Generator module.
-            discriminator: Discriminator module.
-            optimizer_d: Discriminator optimizer.
 
         Returns:
             discriminator loss on fake
             discriminator loss on real
-            total discriminator loss
         """
         if cuda:
             batch = {key: tensor.cuda() for key, tensor in batch.items()}
@@ -438,22 +440,22 @@ class Solver(BaseSolver):
         seq_start_end = batch['seq_start_end']
         loss_fn_disc = self.loss_fns['disc']()
 
-        dxdy_pred = generator(xy_in, dxdy_in, seq_start_end)
+        dxdy_pred = self.generator(xy_in, dxdy_in, seq_start_end)
         xy_pred = relative_to_abs(dxdy_pred, xy_in[-1])
 
         xy_fake = torch.cat([xy_in, xy_pred], dim=0)
         xy_real = torch.cat([xy_in, xy_out], dim=0)
 
 
-        if isinstance(discriminator, TrajectoryDiscriminator):
+        if isinstance(self.discriminator, TrajectoryDiscriminator):
             dxdy_out = batch['dxdy_out']
             dxdy_real = torch.cat([dxdy_in, dxdy_out], dim=0)
             dxdy_fake = torch.cat([dxdy_in, dxdy_pred], dim=0)
-            scores_fake = discriminator(xy_fake, dxdy_fake, seq_start_end)
-            scores_real = discriminator(xy_real, dxdy_real, seq_start_end)
+            scores_fake = self.discriminator(xy_fake, dxdy_fake, seq_start_end)
+            scores_real = self.discriminator(xy_real, dxdy_real, seq_start_end)
         else:
-            scores_fake = discriminator(xy_fake, seq_start_end)
-            scores_real = discriminator(xy_real, seq_start_end)
+            scores_fake = self.discriminator(xy_fake, seq_start_end)
+            scores_real = self.discriminator(xy_real, seq_start_end)
 
 
         target_real = torch.ones_like(scores_real).type(dtype) * random.uniform(0.7, 1.2)
@@ -464,9 +466,9 @@ class Solver(BaseSolver):
 
         loss = disc_loss_fake + disc_loss_real
 
-        optimizer_d.zero_grad()
+        self.optimizer_d.zero_grad()
         loss.backward()
-        optimizer_d.step()
+        self.optimizer_d.step()
 
         return disc_loss_fake.item(), disc_loss_real.item()
 
@@ -484,19 +486,15 @@ class SGANSolver(BaseSolver):
         super().__init__(generator, discriminator, optim, optims_args, loss_fns, loss_weights, init_params)
         self.args = experiment
 
-    def generator_step(self, batch, generator, discriminator, optimizer_g, val_mode=False):
+    def generator_step(self, batch, val_mode=False):
         """Generator optimization step.
 
         Args:
             batch: Batch from the data loader.
-            generator: Generator module.
-            discriminator: Discriminator module.
-            optimizer_g: Generator optimizer.
 
         Returns:
             discriminator loss on fake
             norm loss on trajectory
-            total generator loss
         """
         if cuda:
             batch = {key: tensor.cuda() for key, tensor in batch.items()}
@@ -513,7 +511,7 @@ class SGANSolver(BaseSolver):
         l2_losses = []
 
         for _ in range(self.args.best_k):
-            dxdy_pred = generator(xy_in, dxdy_in, seq_start_end)
+            dxdy_pred = self.generator(xy_in, dxdy_in, seq_start_end)
             xy_pred = relative_to_abs(dxdy_in, xy_in[-1])
 
             if self.args.weight_l2_loss:  # Important: Computes loss on displacements.
@@ -532,7 +530,7 @@ class SGANSolver(BaseSolver):
 
         xy_fake = torch.cat([xy_in, xy_pred], dim=0)
         dxdy_fake = torch.cat([dxdy_in, dxdy_pred], dim=0)
-        scores_fake = discriminator(xy_fake, dxdy_fake, seq_start_end)
+        scores_fake = self.discriminator(xy_fake, dxdy_fake, seq_start_end)
         target_fake = torch.ones_like(scores_fake).type(dtype) * random.uniform(0.7, 1.2)
 
         disc_loss = loss_fn_disc(scores_fake, target_fake)
@@ -540,28 +538,24 @@ class SGANSolver(BaseSolver):
         loss = w_disc * disc_loss + l2_loss
 
         if not val_mode:
-            optimizer_g.zero_grad()
+            self.optimizer_g.zero_grad()
             loss.backward()
             if self.args.clip:
                 # QUESTION: Is this a Lipschitz constraining method as in W-GAN?
-                nn.utils.clip_grad_norm_(generator.parameters(), self.args.clip)
-            optimizer_g.step()
+                nn.utils.clip_grad_norm_(self.generator.parameters(), self.args.clip)
+            self.optimizer_g.step()
 
         return disc_loss.item(), l2_loss.item()
 
-    def discriminator_step(self, batch, generator, discriminator, optimizer_d):
+    def discriminator_step(self, batch):
         """Discriminator optimization step.
 
         Args:
             batch: Batch from the data loader.
-            generator: Generator module.
-            discriminator: Discriminator module.
-            optimizer_d: Discriminator optimizer.
 
         Returns:
             discriminator loss on fake
             discriminator loss on real
-            total discriminator loss
         """
         if cuda:
             batch = {key: tensor.cuda() for key, tensor in batch.items()}
@@ -572,7 +566,7 @@ class SGANSolver(BaseSolver):
         seq_start_end = batch['seq_start_end']
         loss_fn_disc = self.loss_fns['disc']()
 
-        dxdy_pred = generator(xy_in, dxdy_in, seq_start_end)
+        dxdy_pred = self.generator(xy_in, dxdy_in, seq_start_end)
         xy_pred = relative_to_abs(dxdy_pred, xy_in[-1])
 
         xy_fake = torch.cat([xy_in, xy_pred], dim=0)
@@ -581,8 +575,8 @@ class SGANSolver(BaseSolver):
         dxdy_fake = torch.cat([dxdy_in, dxdy_pred], dim=0)
 
         # IMPORTANT: In SGAN the discriminator gets the displacement, too.
-        scores_fake = discriminator(xy_fake, dxdy_fake, seq_start_end)
-        scores_real = discriminator(xy_real, dxdy_real, seq_start_end)
+        scores_fake = self.discriminator(xy_fake, dxdy_fake, seq_start_end)
+        scores_real = self.discriminator(xy_real, dxdy_real, seq_start_end)
 
         target_real = torch.ones_like(scores_real).type(dtype) * random.uniform(0.7, 1.2)
         target_fake = torch.zeros_like(scores_fake).type(dtype) * random.uniform(0., 0.3)
@@ -592,12 +586,11 @@ class SGANSolver(BaseSolver):
 
         loss = disc_loss_fake + disc_loss_real
 
-        optimizer_d.zero_grad()
+        self.optimizer_d.zero_grad()
         loss.backward()
         if self.args.clip:
-            # QUESTION: Is this a Lipschitz constraining method as in W-GAN?
-            nn.utils.clip_grad_norm_(discriminator.parameters(), self.args.clip)
-        optimizer_d.step()
+            nn.utils.clip_grad_norm_(self.discriminator.parameters(), self.args.clip)
+        self.optimizer_d.step()
 
         return disc_loss_fake.item(), disc_loss_real.item()
 
@@ -606,30 +599,25 @@ class cLRSolver(Solver):
     """Implements a generator and a discriminator step for the conditional latent regressor model.
 
     See BaseSolver for detailed docstring.
-    # TODO: Either make generic somehow to work with sgan too or implement an sgan version.
     """
 
     def __init__(self, generator, discriminator, optim=torch.optim.Adam, encoder_optim=torch.optim.SGD, optims_args=None,
                  loss_fns=None, loss_weights=None, init_params=False):
         super().__init__(generator, discriminator, optim, optims_args, loss_fns, loss_weights, init_params)
-        generator.clr()
+        self.generator.clr()
         self.train_loss_history = {'generator': {'G_BCE': [], 'G_L1z': []},
                                    'discriminator': {'D_Real': [], 'D_Fake': []}}
         self.encoder_optim = encoder_optim
 
-    def generator_step(self, batch, generator, discriminator, optimizer_g, val_mode=False):
+    def generator_step(self, batch, val_mode=False):
         """Generator optimization step.
 
         Args:
             batch: Batch from the data loader.
-            generator: Generator module.
-            discriminator: Discriminator module.
-            optimizer_g: Generator optimizer.
 
         Returns:
             discriminator loss on fake
-            norm loss on trajectory
-            total generator loss
+            latent loss
         """
         if cuda:
             batch = {key: tensor.cuda() for key, tensor in batch.items()}
@@ -645,30 +633,32 @@ class cLRSolver(Solver):
         #w_traj = self.loss_weights['traj']
         w_z = self.loss_weights['z']
 
-        dxdy_pred = generator(xy_in, dxdy_in, seq_start_end)
+        dxdy_pred = self.generator(xy_in, dxdy_in, seq_start_end)
         xy_pred = relative_to_abs(dxdy_pred, xy_in[-1])
         xy_fake = torch.cat([xy_in, xy_pred], dim=0)
-        if isinstance(discriminator, TrajectoryDiscriminator):
-            dxdy_out = batch['dxdy_out']
+
+        if isinstance(self.discriminator, TrajectoryDiscriminator): #SGAN
             dxdy_fake = torch.cat([dxdy_in, dxdy_pred], dim=0)
-            scores_fake = discriminator(xy_fake, dxdy_fake, seq_start_end)
+            scores_fake = self.discriminator(xy_fake, dxdy_fake, seq_start_end)
         else:
-            scores_fake = discriminator(xy_fake, seq_start_end)
+            scores_fake = self.discriminator(xy_fake, seq_start_end)
         target_fake = torch.ones_like(scores_fake).type(dtype) * random.uniform(0.7, 1.2)
 
         if val_mode:
-            generator.z_random = get_z_random(xy_in.size(1), generator.z_dim)
-            z_encoded, generator.mu, generator.logvar = generator.encoder(xy_out)
+            self.generator.z_random = get_z_random(xy_in.size(1), self.generator.z_dim)
+            z_encoded, self.generator.mu, self.generator.logvar = self.generator.encoder(xy_out)
 
-        z_loss = loss_fn_z(generator.mu, generator.z_random)  # Important: Here, we compare the latent vectors.
+        z_loss = loss_fn_z(self.generator.mu, self.generator.z_random)  # Important: Here, we compare the latent vectors.
         disc_loss = loss_fn_disc(scores_fake, target_fake)
 
         loss = w_disc * disc_loss + w_z * z_loss
 
         if not val_mode:
-            optimizer_g.zero_grad()
+            self.optimizer_e.zero_grad()
+            self.optimizer_g.zero_grad()
             loss.backward()
-            optimizer_g.step()
+            self.optimizer_g.step()
+            self.optimizer_e.step()
         return disc_loss.item(), z_loss.item()
 
 
@@ -676,30 +666,26 @@ class cVAESolver(Solver):
     """Implements a generator and a discriminator step for the conditional latent regressor model.
 
     See BaseSolver for detailed docstring.
-    # TODO: Either make generic somehow to work with sgan too or implement an sgan version.
     """
 
     def __init__(self, generator, discriminator, optim=torch.optim.Adam, encoder_optim=torch.optim.SGD, optims_args=None,
                  loss_fns=None, loss_weights=None, init_params=False):
         super().__init__(generator, discriminator, optim, optims_args, loss_fns, loss_weights, init_params)
-        generator.cvae()
+        self.generator.cvae()
         self.train_loss_history = {'generator': {'G_BCE': [], 'G_L1': [], 'G_KL': []},
                                    'discriminator': {'D_Real': [], 'D_Fake': []}}
         self.encoder_optim = encoder_optim
 
-    def generator_step(self, batch, generator, discriminator, optimizer_g, val_mode=False):
+    def generator_step(self, batch, val_mode=False):
         """Generator optimization step.
 
         Args:
             batch: Batch from the data loader.
-            generator: Generator module.
-            discriminator: Discriminator module.
-            optimizer_g: Generator optimizer.
 
         Returns:
             discriminator loss on fake
             norm loss on trajectory
-            total generator loss
+            kl loss
         """
         if cuda:
             batch = {key: tensor.cuda() for key, tensor in batch.items()}
@@ -716,45 +702,42 @@ class cVAESolver(Solver):
         w_traj = self.loss_weights['traj']
         w_kl = self.loss_weights['kl']
 
-        dxdy_pred = generator(xy_in, dxdy_in, seq_start_end, xy_out)
+        dxdy_pred = self.generator(xy_in, dxdy_in, seq_start_end, xy_out)
         xy_pred = relative_to_abs(dxdy_pred, xy_in[-1])
         xy_fake = torch.cat([xy_in, xy_pred], dim=0)
-        if isinstance(discriminator, TrajectoryDiscriminator):
+        if isinstance(self.discriminator, TrajectoryDiscriminator):
             dxdy_out = batch['dxdy_out']
             dxdy_fake = torch.cat([dxdy_in, dxdy_pred], dim=0)
-            scores_fake = discriminator(xy_fake, dxdy_fake, seq_start_end)
+            scores_fake = self.discriminator(xy_fake, dxdy_fake, seq_start_end)
         else:
-            scores_fake = discriminator(xy_fake, seq_start_end)
+            scores_fake = self.discriminator(xy_fake, seq_start_end)
         target_fake = torch.ones_like(scores_fake).type(dtype) * random.uniform(0.7, 1.2)
 
         if val_mode:
-            z_encoded, generator.mu, generator.logvar = generator.encoder(xy_out)
+            z_encoded, self.generator.mu, self.generator.logvar = self.generator.encoder(xy_out)
 
         traj_loss = loss_fn_traj(dxdy_pred, dxdy_out)
         disc_loss = loss_fn_disc(scores_fake, target_fake)
-        kl_loss = loss_fn_kl(generator.mu, generator.logvar)
-
+        kl_loss = loss_fn_kl(self.generator.mu, self.generator.logvar)
         loss = w_disc * disc_loss + w_traj * traj_loss + w_kl * kl_loss
 
         if not val_mode:
-            optimizer_g.zero_grad()
+            self.optimizer_g.zero_grad()
+            self.optimizer_e.zero_grad()
             loss.backward()
-            optimizer_g.step()
+            self.optimizer_g.step()
+            self.optimizer_e.step()
         return disc_loss.item(), traj_loss.item(), kl_loss.item()
 
-    def discriminator_step(self, batch, generator, discriminator, optimizer_d):
+    def discriminator_step(self, batch):
         """Discriminator optimization step.
 
         Args:
             batch: Batch from the data loader.
-            generator: Generator module.
-            discriminator: Discriminator module.
-            optimizer_d: Discriminator optimizer.
 
         Returns:
             discriminator loss on fake
             discriminator loss on real
-            total discriminator loss
         """
         if cuda:
             batch = {key: tensor.cuda() for key, tensor in batch.items()}
@@ -764,21 +747,21 @@ class cVAESolver(Solver):
         seq_start_end = batch['seq_start_end']
         loss_fn_disc = self.loss_fns['disc']()
 
-        dxdy_pred = generator(xy_in, dxdy_in, seq_start_end, xy_out)
+        dxdy_pred = self.generator(xy_in, dxdy_in, seq_start_end, xy_out)
         xy_pred = relative_to_abs(dxdy_pred, xy_in[-1])
 
         xy_fake = torch.cat([xy_in, xy_pred], dim=0)
         xy_real = torch.cat([xy_in, xy_out], dim=0)
 
-        if isinstance(discriminator, TrajectoryDiscriminator):
+        if isinstance(self.discriminator, TrajectoryDiscriminator):
             dxdy_out = batch['dxdy_out']
             dxdy_real = torch.cat([dxdy_in, dxdy_out], dim=0)
             dxdy_fake = torch.cat([dxdy_in, dxdy_pred], dim=0)
-            scores_fake = discriminator(xy_fake, dxdy_fake, seq_start_end)
-            scores_real = discriminator(xy_real, dxdy_real, seq_start_end)
+            scores_fake = self.discriminator(xy_fake, dxdy_fake, seq_start_end)
+            scores_real = self.discriminator(xy_real, dxdy_real, seq_start_end)
         else:
-            scores_fake = discriminator(xy_fake, seq_start_end)
-            scores_real = discriminator(xy_real, seq_start_end)
+            scores_fake = self.discriminator(xy_fake, seq_start_end)
+            scores_real = self.discriminator(xy_real, seq_start_end)
 
         target_real = torch.ones_like(scores_real).type(dtype) * random.uniform(0.7, 1.2)
         target_fake = torch.zeros_like(scores_fake).type(dtype) * random.uniform(0., 0.3)
@@ -787,9 +770,9 @@ class cVAESolver(Solver):
         disc_loss_fake = loss_fn_disc(scores_fake, target_fake)
 
         loss = disc_loss_fake + disc_loss_real
-        optimizer_d.zero_grad()
+        self.optimizer_d.zero_grad()
         loss.backward()
-        optimizer_d.step()
+        self.optimizer_d.step()
 
         return disc_loss_fake.item(), disc_loss_real.item()
 
@@ -797,48 +780,85 @@ class cVAESolver(Solver):
 class BicycleSolver(BaseSolver):
 
     def __init__(self, generator, discriminator, optim=torch.optim.Adam, encoder_optim=torch.optim.SGD, optims_args=None,
-                 loss_fns=None, loss_weights=None, init_params=False):
+                 loss_fns=None, loss_weights=None, init_params=False, two_discr=False):
         super().__init__(generator, discriminator, optim, optims_args, loss_fns, loss_weights, init_params)
 
-        self.cvaesolver = cVAESolver(generator, discriminator, optim, encoder_optim, optims_args, loss_fns, loss_weights, init_params)
-        self.clrsolver = cLRSolver(generator, discriminator, optim, encoder_optim, optims_args, loss_fns, loss_weights, init_params)
+        if two_discr:
+            import copy
+            discriminator2 = copy.deepcopy(discriminator)
+        else:
+            discriminator2 = discriminator
+
+        self.two_discr = two_discr
+
+        self.clrsolver = cLRSolver(generator,
+                                   discriminator,
+                                   optim,
+                                   encoder_optim,
+                                   optims_args,
+                                   loss_fns,
+                                   loss_weights,
+                                   init_params)
+
+        self.cvaesolver = cVAESolver(generator,
+                                     discriminator2,
+                                     optim,
+                                     encoder_optim,
+                                     optims_args,
+                                     loss_fns,
+                                     loss_weights,
+                                     init_params)
+
         self.train_loss_history = {'generator': {'G_BCE': [], 'G_L1': [], 'G_L1z': [], 'G_KL': []},
                                    'discriminator': {'D_Real': [], 'D_Fake': []}}
+
         self.encoder_optim = encoder_optim
 
-    def generator_step(self, batch, generator, discriminator, optimizer_g, val_mode=False):
+    def generator_step(self, batch, val_mode=False):
+        """Alternates between clr and cvae - generator steps."""
         if self.init:
-            self.optimizer_g = self.optim(generator.generator.parameters(), **self.optims_args['generator'])
+            # overwrites self.optimizer_g from init_optimizers since nested: self.generator.generator
+            self.optimizer_g = self.optim(self.generator.generator.parameters(), **self.optims_args['generator'])
             self.cvaesolver.optimizer_e = self.optimizer_e
             self.clrsolver.optimizer_e = self.optimizer_e
+            self.cvaesolver.optimizer_g = self.optimizer_g
+            self.clrsolver.optimizer_g = self.optimizer_g
             self.init=False
-        if generator.mode == 'clr':
-            self.optimizer_e.param_groups[0]['lr'] = 0.
-            bce_loss, norm_loss = self.clrsolver.generator_step(batch, generator, discriminator, optimizer_g)
+        if self.generator.mode == 'clr':
+            self.optimizer_e.param_groups[0]['lr'] = 0
+            bce_loss, norm_loss = self.clrsolver.generator_step(batch)
             losses = (bce_loss, norm_loss)
-            generator.cvae()
-        elif generator.mode == 'cvae':
+            self.generator.cvae()
+        elif self.generator.mode == 'cvae':
             self.optimizer_e.param_groups[0]['lr'] = self.optimizer_e.defaults['lr']
-            bce_loss, norm_loss, kl_loss = self.cvaesolver.generator_step(batch, generator, discriminator, optimizer_g)
+            bce_loss, norm_loss, kl_loss = self.cvaesolver.generator_step(batch)
             losses = (bce_loss, norm_loss, kl_loss)
-            generator.clr()
-        elif generator.mode == 'eval':
+            self.generator.clr()
+        elif self.generator.mode == 'eval':
             if self.gen_mode == 'clr':
-                bce_loss, norm_loss = self.clrsolver.generator_step(batch, generator, discriminator, optimizer_g, val_mode)
+                bce_loss, norm_loss = self.clrsolver.generator_step(batch, val_mode)
                 losses = (bce_loss, norm_loss)
             elif self.gen_mode == 'cvae':
-                bce_loss, norm_loss, kl_loss = self.cvaesolver.generator_step(batch, generator, discriminator,
-                                                                              optimizer_g, val_mode)
+                bce_loss, norm_loss, kl_loss = self.cvaesolver.generator_step(batch, val_mode)
                 losses = (bce_loss, norm_loss, kl_loss)
         else:
             raise AssertionError('Mode must be either clr or cvae.')
         return losses
 
-    def discriminator_step(self, batch, generator, discriminator, optimizer_d):
-        if generator.mode == 'clr':
-            loss_fake, loss_real = self.clrsolver.discriminator_step(batch, generator, discriminator, optimizer_d)
-        elif generator.mode == 'cvae':
-            loss_fake, loss_real = self.cvaesolver.discriminator_step(batch, generator, discriminator, optimizer_d)
+    def discriminator_step(self, batch):
+        """Alternates between clr and cvae - discriminator steps."""
+        if self.init:
+            if self.two_discr:
+                assert self.cvaesolver.discriminator != self.clrsolver.discriminator, "Discriminators match!"
+                self.cvaesolver.optimizer_d = self.optim(self.cvaesolver.discriminator.parameters(), **self.optims_args['discriminator'])
+                self.clrsolver.optimizer_d = self.optim(self.clrsolver.discriminator.parameters(), **self.optims_args['discriminator'])
+            else:
+                self.cvaesolver.optimizer_d = self.optimizer_d
+                self.clrsolver.optimizer_d = self.optimizer_d
+        if self.generator.mode == 'clr':
+            loss_fake, loss_real = self.clrsolver.discriminator_step(batch)
+        elif self.generator.mode == 'cvae':
+            loss_fake, loss_real = self.cvaesolver.discriminator_step(batch)
         else:
             raise AssertionError('Mode must be either clr or cvae.')
         return loss_fake, loss_real
@@ -849,14 +869,12 @@ class BicycleSolver(BaseSolver):
         Args:
             losses_g (tuple): Return of function generator_step.
             losses_d (tuple): Return of function discriminator_step.
-
-        Note: Here we can store everything that we need for evaluation and
-            save states and models to the hard drive.
-        TODO: Only G_L1 differ per cvae, clr. Implement rather G_L1 and G_L1z
         """
         if self.generator.mode == 'cvae':
+            # if the mode is cvae then the losses come from clr
             self.train_loss_history['generator']['G_L1z'].append(losses_g[1])
         elif self.generator.mode == 'clr':
+            # if the mode is clr then the losses come from cvae
             self.train_loss_history['generator']['G_L1'].append(losses_g[1])
             self.train_loss_history['generator']['G_KL'].append(losses_g[2])
         self.train_loss_history['generator']['G_BCE'].append(losses_g[0])
