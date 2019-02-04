@@ -66,7 +66,7 @@ class BaseSolver:
                       'd_state': self.discriminator.state_dict(),
                       'g_optim_state': self.optimizer_g.state_dict(),
                       'd_optim_state': self.optimizer_d.state_dict(),
-                      'e_optim_state': self.e_optim_state,
+                      'e_optim_state': e_optim_state,
                       'train_loss_history': self.train_loss_history}
         self.model_str = 'models/' + model_name + '_' + time.strftime("%Y%m%d-%H%M%S") + '_epoch_' + str(trained_epochs)
         self.model_path = root_path / self.model_str
@@ -93,8 +93,8 @@ class BaseSolver:
             self.init_optimizers()
             self.optimizer_g.load_state_dict(checkpoint['g_optim_state'])
             self.optimizer_d.load_state_dict(checkpoint['d_optim_state'])
-        #if self.encoder_optim:
-        #    self.optimizer_e.load_state_dict(checkpoint['e_optim_state'])
+        if self.encoder_optim:
+            self.optimizer_e.load_state_dict(checkpoint['e_optim_state'])
         self.train_loss_history = checkpoint['train_loss_history']
         total_epochs = checkpoint['epochs']
         return total_epochs
@@ -130,6 +130,7 @@ class BaseSolver:
             self._pprint(epochs, init=self.init)
         if val_every:
             self.validation(init=self.init)
+
         while epochs:
             gsteps = steps['generator']
             dsteps = steps['discriminator']
@@ -211,9 +212,9 @@ class BaseSolver:
                                                             'diversity': {'scene_cos': [], 'agent_interp': []} }})
         else:
             if hasattr(self.generator, 'mode'):
-                gen_mode = self.generator.mode
+                self.gen_mode = self.generator.mode
             else:
-                gen_mode = False
+                self.gen_mode = False
             self.generator.eval()
 
             # Diversities
@@ -250,11 +251,11 @@ class BaseSolver:
             for l in losses_list: # mean loss over batches
                 if len(l) != 0: losses_g.append(sum(l)/len(l))
 
-            if gen_mode:
-                if gen_mode == 'clr':
+            if self.gen_mode:
+                if self.gen_mode == 'clr':
                     self.train_loss_history['validation']['generator']['G_BCE'].append(losses_g[0])
                     self.train_loss_history['validation']['generator']['G_L1z'].append(losses_g[1])
-                elif gen_mode == 'cvae':
+                elif self.gen_mode == 'cvae':
                     self.train_loss_history['validation']['generator']['G_BCE'].append(losses_g[0])
                     self.train_loss_history['validation']['generator']['G_L1'].append(losses_g[1])
                     self.train_loss_history['validation']['generator']['G_KL'].append(losses_g[2])
@@ -262,6 +263,7 @@ class BaseSolver:
                 self.train_loss_history['validation']['generator']['G_BCE'].append(losses_g[0])
                 self.train_loss_history['validation']['generator']['G_L1'].append(losses_g[1])
             self.generator.train()
+            self.generator.mode = self.gen_mode
 
     def interpolate(self, loader, scene=25, stepsize=0.2, seed=20, z_dim=8, load_checkpoint_from=None):
         torch.manual_seed(seed)
@@ -631,6 +633,7 @@ class cLRSolver(Solver):
         if cuda:
             batch = {key: tensor.cuda() for key, tensor in batch.items()}
         xy_in = batch['xy_in']
+        xy_out = batch['xy_out']
         # dxdy_out = batch['dxdy_out']
         dxdy_in = batch['dxdy_in']
         seq_start_end = batch['seq_start_end']
@@ -651,6 +654,10 @@ class cLRSolver(Solver):
         else:
             scores_fake = discriminator(xy_fake, seq_start_end)
         target_fake = torch.ones_like(scores_fake).type(dtype) * random.uniform(0.7, 1.2)
+
+        if val_mode:
+            generator.z_random = get_z_random(xy_in.size(1), generator.z_dim)
+            z_encoded, generator.mu, generator.logvar = generator.encoder(xy_out)
 
         z_loss = loss_fn_z(generator.mu, generator.z_random)  # Important: Here, we compare the latent vectors.
         disc_loss = loss_fn_disc(scores_fake, target_fake)
@@ -718,6 +725,9 @@ class cVAESolver(Solver):
         else:
             scores_fake = discriminator(xy_fake, seq_start_end)
         target_fake = torch.ones_like(scores_fake).type(dtype) * random.uniform(0.7, 1.2)
+
+        if val_mode:
+            z_encoded, generator.mu, generator.logvar = generator.encoder(xy_out)
 
         traj_loss = loss_fn_traj(dxdy_pred, dxdy_out)
         disc_loss = loss_fn_disc(scores_fake, target_fake)
@@ -795,7 +805,7 @@ class BicycleSolver(BaseSolver):
                                    'discriminator': {'D_Real': [], 'D_Fake': []}}
         self.encoder_optim = encoder_optim
 
-    def generator_step(self, batch, generator, discriminator, optimizer_g):
+    def generator_step(self, batch, generator, discriminator, optimizer_g, val_mode=False):
         if self.init:
             self.optimizer_g = self.optim(generator.generator.parameters(), **self.optims_args['generator'])
             self.cvaesolver.optimizer_e = self.optimizer_e
@@ -811,6 +821,14 @@ class BicycleSolver(BaseSolver):
             bce_loss, norm_loss, kl_loss = self.cvaesolver.generator_step(batch, generator, discriminator, optimizer_g)
             losses = (bce_loss, norm_loss, kl_loss)
             generator.clr()
+        elif generator.mode == 'eval':
+            if self.gen_mode == 'clr':
+                bce_loss, norm_loss = self.clrsolver.generator_step(batch, generator, discriminator, optimizer_g, val_mode)
+                losses = (bce_loss, norm_loss)
+            elif self.gen_mode == 'cvae':
+                bce_loss, norm_loss, kl_loss = self.cvaesolver.generator_step(batch, generator, discriminator,
+                                                                              optimizer_g, val_mode)
+                losses = (bce_loss, norm_loss, kl_loss)
         else:
             raise AssertionError('Mode must be either clr or cvae.')
         return losses
@@ -836,9 +854,9 @@ class BicycleSolver(BaseSolver):
         TODO: Only G_L1 differ per cvae, clr. Implement rather G_L1 and G_L1z
         """
         if self.generator.mode == 'cvae':
-            self.train_loss_history['generator']['G_L1'].append(losses_g[1])
-        elif self.generator.mode == 'clr':
             self.train_loss_history['generator']['G_L1z'].append(losses_g[1])
+        elif self.generator.mode == 'clr':
+            self.train_loss_history['generator']['G_L1'].append(losses_g[1])
             self.train_loss_history['generator']['G_KL'].append(losses_g[2])
         self.train_loss_history['generator']['G_BCE'].append(losses_g[0])
         self.train_loss_history['discriminator']['D_Fake'].append(losses_d[0])
@@ -863,8 +881,8 @@ class BicycleSolver(BaseSolver):
                 msg += f'{loss[-1]:<10.3f}' if loss else ''.rjust(10)
         print(msg)
 
-    def init_optimizers(self):
-        self.optimizer_g = self.optim([{'params': self.generator.generator.parameters()},
-                                       {'params': self.generator.encoder.parameters()}],
-                                      **self.optims_args['generator'])
-        self.optimizer_d = self.optim(self.discriminator.parameters(), **self.optims_args['discriminator'])
+    # def init_optimizers(self):
+    #     self.optimizer_g = self.optim([{'params': self.generator.generator.parameters()},
+    #                                    {'params': self.generator.encoder.parameters()}],
+    #                                   **self.optims_args['generator'])
+    #     self.optimizer_d = self.optim(self.discriminator.parameters(), **self.optims_args['discriminator'])
