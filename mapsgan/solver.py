@@ -8,7 +8,7 @@ from pathlib import Path
 from mapsgan.utils import get_dtypes, relative_to_abs, init_weights, get_z_random, get_cosine_score, cos_scene, get_average_fde, get_collisions
 from mapsgan.losses import l2_loss as loss_fn_l2
 from mapsgan.losses import kl_loss as loss_fn_kl
-from sgan import TrajectoryGenerator, TrajectoryDiscriminator
+from mapsgan.sgan import TrajectoryGenerator, TrajectoryDiscriminator
 import time
 
 

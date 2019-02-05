@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 from mapsgan.utils import get_dtypes, make_mlp, get_noise, get_z_random, relative_to_abs
-from sgan import TrajectoryGenerator, TrajectoryDiscriminator
+from mapsgan.sgan import TrajectoryGenerator, TrajectoryDiscriminator
 
 long_dtype, dtype = get_dtypes()  # dtype is either torch.FloatTensor or torch.cuda.FloatTensor
 

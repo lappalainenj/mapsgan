@@ -205,7 +205,7 @@ def smooth_data(data, N):
 
 def get_sgan_generator(checkpoint, cuda=False):
     from attrdict import AttrDict
-    from sgan import TrajectoryGenerator
+    from mapsgan.sgan import TrajectoryGenerator
     args = AttrDict(checkpoint['args'])
     generator = TrajectoryGenerator(
         obs_len=args.obs_len,
