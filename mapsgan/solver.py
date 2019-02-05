@@ -292,13 +292,10 @@ class BaseSolver:
         dxdy_in = batch['dxdy_in']
         seq_start_end = batch['seq_start_end']
         # Interpolation
-        t=np.arange(0, 1.+stepsize, stepsize)
-        z0 = get_z_random(xy_in.size(1), z_dim)
-        z1 = get_z_random(xy_in.size(1), z_dim)
-        if cuda:
-            t = torch.from_numpy(t).cuda()
-            z0 = z0.cuda().double()
-            z1 = z1.cuda().double()
+        t=torch.Tensor(np.arange(0, 1.+stepsize, stepsize)).type(dtype)
+        z0 = get_z_random(xy_in.size(1), z_dim).type(dtype)
+        z1 = get_z_random(xy_in.size(1), z_dim).type(dtype)
+
         for ti in t:
             z = z0 + ti*(z1-z0)
             dxdy_pred = self.generator(xy_in, dxdy_in, seq_start_end, user_noise=z)

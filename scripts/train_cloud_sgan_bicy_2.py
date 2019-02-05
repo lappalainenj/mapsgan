@@ -18,7 +18,7 @@ fileprefix = '/cloud/sgan_bicy_2'
 lr_gen = 1e-3
 lr_dis = 1e-3
 lr_enc = 1e-3
-loss_weights = {'disc': 1, 'traj': 2, 'kl': 0.1, 'z': 0.5}
+loss_weights = {'disc': 1, 'traj': 1, 'kl': 0.01, 'z': 0.5}
 obs_len = 8,
 pred_len = 12
 embedding_dim = 16
@@ -84,7 +84,7 @@ solver = BicycleSolver(generator, discriminator,
 print('Starting training...')
 time_start = time.time()
 solver.train(trainloader,
-             epochs=10000,
+             epochs=5000,
              checkpoint_every=9,
              print_every=9,
              val_every=9,

@@ -181,7 +181,6 @@ class Visualization(Evaluation):
         xmin = np.min([np.min(seq[:, :, 0]) for scene in output.values() for seq in scene]) - 0.1
         xmax = np.max([np.max(seq[:, :, 0]) for scene in output.values() for seq in scene]) + 0.1
 
-        # sns.set_context('poster')
         fig = self.plot.init_figure(figsize)
         max_a = 0
         i=0
@@ -193,7 +192,7 @@ class Visualization(Evaluation):
             max_a = max(max_a,num_agents)
 
             color = ['b', 'orange', 'g', 'r', 'purple', 'k']
-            if dist:
+            if not dist:
                 ax = self.plot.init_subplot(type, tot_tup=(gridheight, gridwidth), sp_tup=(int(i // gridwidth), int(i % gridwidth)))
             ax.set_xlim([xmin, xmax])
             ax.set_ylim([ymin, ymax])
