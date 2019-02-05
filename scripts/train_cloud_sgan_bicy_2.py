@@ -2,7 +2,7 @@ import torch
 from mapsgan import BicycleSolver, BicycleGenerator, data_loader, get_sgan_generator
 import mapsgan.experiments as experiments
 import time
-from sgan import TrajectoryGenerator, TrajectoryDiscriminator
+from mapsgan.sgan import TrajectoryGenerator, TrajectoryDiscriminator
 
 cuda = torch.cuda.is_available()
 ml = 'cpu' if not cuda else None
