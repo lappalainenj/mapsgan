@@ -133,7 +133,21 @@ class Visualization(Evaluation):
     def __init__(self):
         pass
 
-    def trajectories(self, output, scenes = [2], legend=False, ground_truth=False, input_truth=False, xlim=None, ylim=None):
+    def distribution(self, predictions, legend=False, ground_truth=False, input_truth=False):
+        """
+
+        Args:
+            predictions (dict): a disctionary of lists (output of Solver.sample_distribution)
+            legend (bool):
+            ground_truth (bool):
+            input_truth (bool):
+
+        Returns:
+
+        """
+        pass
+
+    def trajectories(self, output, scenes = [2], legend=False, ground_truth=False, input_truth=False, dist=False, xlim=None, ylim=None):
         """
 
         Args:
@@ -170,12 +184,17 @@ class Visualization(Evaluation):
         # sns.set_context('poster')
         fig = self.plot.init_figure(figsize)
         max_a = 0
+        i=0
+        ax = self.plot.init_subplot(type, tot_tup=(gridheight, gridwidth),
+                                    sp_tup=(int(i // gridwidth), int(i % gridwidth)))
+
         for i, s in enumerate(scenes_list):
             num_agents = output['xy_in'][s].shape[1]
             max_a = max(max_a,num_agents)
 
             color = ['b', 'orange', 'g', 'r', 'purple', 'k']
-            ax = self.plot.init_subplot(type, tot_tup=(gridheight, gridwidth), sp_tup=(int(i // gridwidth), int(i % gridwidth)))
+            if dist:
+                ax = self.plot.init_subplot(type, tot_tup=(gridheight, gridwidth), sp_tup=(int(i // gridwidth), int(i % gridwidth)))
             ax.set_xlim([xmin, xmax])
             ax.set_ylim([ymin, ymax])
             #ax.set_xticks([])
@@ -190,7 +209,6 @@ class Visualization(Evaluation):
                              '.-', c=color[a%len(color)], markersize=5, label=f'Output Agent {a}')
                 ax.plot( output['xy_pred'][s][:, a, 0], output['xy_pred'][s][:, a, 1],
                          'x-', c=color[a%len(color)], markersize=5,  label=f'Prediction Agent {a}')
-
             ax.set_title(s)
 
         if legend:

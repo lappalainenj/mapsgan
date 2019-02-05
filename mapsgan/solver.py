@@ -310,37 +310,30 @@ class BaseSolver:
                 out['xy_pred'].append(xy_pred[:, start:end].cpu().detach().numpy())
         return out
 
-    # def sample_distribution(self, loader, scene = 65, seed=20, num_samples=5):
-    #     if cuda:
-    #         self.generator.cuda()
-    #
-    #     self.generator.eval()
-    #     out = {'xy_in': [], 'xy_out': [], 'xy_pred': []}
-    #     batch = list(iter(loader))[scene]
-    #     if cuda:
-    #         batch = {key: tensor.cuda() for key, tensor in batch.items()}
-    #     xy_in = batch['xy_in']
-    #     xy_out = batch['xy_out']
-    #     dxdy_in = batch['dxdy_in']
-    #     seq_start_end = batch['seq_start_end']
-    #
-    #     t=np.arange(0, 1.+stepsize, stepsize)
-    #     z0 = get_z_random(xy_in.size(1), z_dim)
-    #     z1 = get_z_random(xy_in.size(1), z_dim)
-    #     if cuda:
-    #         t = torch.from_numpy(t).cuda()
-    #         z0 = z0.cuda().double()
-    #         z1 = z1.cuda().double()
-    #     for ti in t:
-    #         z = z0 + ti*(z1-z0)
-    #         dxdy_pred = self.generator(xy_in, dxdy_in, seq_start_end, user_noise=z)
-    #         xy_pred = relative_to_abs(dxdy_pred, xy_in[-1])
-    #         for seq in seq_start_end:
-    #             start, end = seq
-    #             out['xy_in'].append(xy_in[:, start:end].cpu().numpy())
-    #             out['xy_out'].append(xy_out[:, start:end].cpu().numpy())
-    #             out['xy_pred'].append(xy_pred[:, start:end].cpu().detach().numpy())
-    #     return out
+    def sample_distribution(self, loader, scene = 65, seed=20, num_samples=5, z_dim=8):
+        if cuda:
+            self.generator.cuda()
+        self.generator.eval()
+        batch = list(iter(loader))[scene]
+        if cuda:
+            batch = {key: tensor.cuda() for key, tensor in batch.items()}
+        xy_in = batch['xy_in']
+        xy_out = batch['xy_out']
+        dxdy_in = batch['dxdy_in']
+        seq_start_end = batch['seq_start_end']
+        torch.manual_seed(seed)
+        out = {'xy_in': [], 'xy_out': [], 'xy_pred': []}
+        for n in range(num_samples):
+            z = get_z_random(xy_in.size(1), z_dim)
+            if cuda: z = z.cuda().double()
+            dxdy_pred = self.generator(xy_in, dxdy_in, seq_start_end, user_noise=z)
+            xy_pred = relative_to_abs(dxdy_pred, xy_in[-1])
+            for seq in seq_start_end:
+                start, end = seq
+                out['xy_in'].append(xy_in[:, start:end].cpu().numpy())
+                out['xy_out'].append(xy_out[:, start:end].cpu().numpy())
+                out['xy_pred'].append(xy_pred[:, start:end].cpu().detach().numpy())
+        return out
 
 
     def _checkpoint(self, losses_g, losses_d):
