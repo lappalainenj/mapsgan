@@ -3,5 +3,6 @@ from .experiments import *
 from .losses import *
 from .modules import *
 from .solver import *
-from .toymodules import *
+import mapsgan.sgan
+import mapsgan.sophie
 from .utils import *

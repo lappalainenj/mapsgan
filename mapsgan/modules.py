@@ -1,318 +1,436 @@
-"""
-Architechtural modules of social physical attentive multimodal conditional generative adversarial network for tajectory prediction
-
-authors: Janne Lappalainen (email)
-         Yagmur Yener (yagmur.yener@tum.de)
-
-TODO: Attention must be added into the Decoder from sgan, instead of pool_net (line 199).
-"""
-
 import torch
 import torch.nn as nn
-import torchvision.models as models
-import numpy as np
+
+from mapsgan.utils import get_dtypes, make_mlp, get_noise, get_z_random, relative_to_abs
+from mapsgan.sgan import TrajectoryGenerator, TrajectoryDiscriminator
+
+long_dtype, dtype = get_dtypes()  # dtype is either torch.FloatTensor or torch.cuda.FloatTensor
 
 
-# Feature Extractors -------------------------------------------------------------------------
+class Encoder(nn.Module):
+    """Encoder, part of both Generator and Discriminator.
 
-class SocialEncoder(nn.Module):
-
-    def __init__(self, input_dim=2, mlp_dim=16, hidden_dim=16, num_layers=1):
-        """
         Args:
-            input_dim: number of input features (two features: x and y coordinates)
-            mlp_dim: spatial embedding dimension of xy coordinates to high dim
-            hidden_dim: number of dimensions of the hidden state and therefore the output of LSTM
-            num_layers: number of different LSTMs (different Weight sets for each LSTM)
-        """
-        super(SocialEncoder, self).__init__()
+            embedding_dim (int): Output dim of embedding (2 -> embedding_dim, via Linear layer).
+            h_dim (int): Hidden dim of the LSTM (embedding_dim -> h_dim).
+            num_layers (int): Number of stacked lstms.
+            dropout (float): Specifies dropout in the lstm layer.
 
-        self.input_dim = input_dim
-        self.mlp_dim = mlp_dim
-        self.hidden_dim = hidden_dim
+        Attributes:
+            embedding_dim (int): Output dim of linear layer: 2 -> embedding_dim.
+            h_dim (int): Hidden dim of the LSTM: embedding_dim -> h_dim.
+            num_layers (int): Number of stacked lstms.
+            embedding (nn.Linear): Embeds x and y coordinates into embedding_dim dimensions.
+            encoder (nn.LSTM): Encodes trajectory information.
+
+    """
+
+    def __init__(self, embedding_dim=64, h_dim=64, num_layers=1, dropout=0.0):
+        super(Encoder, self).__init__()
+
+        self.h_dim = h_dim
+        self.embedding_dim = embedding_dim
         self.num_layers = num_layers
 
-        self.mlp_spatial = nn.Sequential(nn.Linear(input_dim, mlp_dim), nn.ReLU())
-        self.lstm = nn.Sequential(nn.LSTM(mlp_dim, hidden_dim, num_layers))
+        self.embedding = nn.Linear(2, embedding_dim)
+        self.encoder = nn.LSTM(embedding_dim, h_dim, num_layers, dropout=dropout)
 
-    def sort(self, encoded_seq, distances):
-        sortout = encoded_seq.view(32, 1, 16).repeat(1, 32, 1)
-        for i, agent in enumerate(sortout):
-            sortout[i] = sortout[i, np.argsort(distances[i])]
-        return sortout
+    def init_hidden(self, batch):
+        return (torch.zeros(self.num_layers, batch, self.h_dim).type(dtype),
+                torch.zeros(self.num_layers, batch, self.h_dim).type(dtype))
 
-    def forward(self, input_seq, distances, train_len=8):
+    def forward(self, xy_in):
+        """ Forward function of the Trajectory Encoder.
+
+            Args:
+                xy_in (tensor): Tensor of shape (in_len, batch_size, 2).
+
+            Returns:
+                tensor: Tensor of shape (self.num_layers, batch, self.h_dim).
+
+            Note: The batchsize does not need to be static.
         """
+        # Encode observed Trajectory
+        batch = xy_in.size(1)
+        xy_in_embedding = self.embedding(xy_in.contiguous().view(-1, 2))
+        xy_in_embedding = xy_in_embedding.view(-1, batch, self.embedding_dim)
+        state_tuple = self.init_hidden(batch)
+        output, state = self.encoder(xy_in_embedding, state_tuple)
+        hidden = state[0]
+        return hidden
+
+
+class ToyDecoder(nn.Module):
+    """Decoder, part of Generator that predicts displacements.
+
         Args:
-            input_seq: should be compatible with shape seq_len x batch_dim x input_dim
-            seq_len: length of the time sequence
-            batch_size: batch size (number of agents ?)
-            distances (tensor): Distances of sequence train_len (defaults to 8).
-        
+            out_len (int): Length of the sequence to predict.
+            embedding_dim (int): Output dim of embedding (2 -> embedding_dim, via Linear layer). Defaults to 64.
+            h_dim (int): Hidden dim of the LSTM (embedding_dim -> h_dim -> 2). Defaults to 128.
+            num_layers (int): Number of stacked lstms. Defaults to 1.
+            dropout (float): Dropout for LSTM and pooling. Defaults to 0.0.
+
+        Attributes:
+            out_len (int): Length of the sequence.
+            embedding_dim (int): Output dim of embedding (2 -> embedding_dim, via Linear layer).
+            h_dim (int): Hidden dim of the LSTM (embedding_dim -> h_dim -> 2).
+            embedding (nn.Linear): Embedding layer.
+            decoder (nn.LSTM): Single sequence length decoding lstm.
+            hidden2pos (nn.Linear): Linear layer, transforming LSTMs hidden to coordinates.
+    """
+
+    def __init__(self, out_len, embedding_dim=64, h_dim=128, num_layers=1, dropout=0.0):
+        super(ToyDecoder, self).__init__()
+
+        self.out_len = out_len
+        self.embedding_dim = embedding_dim
+        self.h_dim = h_dim
+
+        self.embedding = nn.Linear(2, embedding_dim)
+        self.decoder = nn.LSTM(embedding_dim, h_dim, num_layers, dropout=dropout)
+        self.hidden2pos = nn.Linear(h_dim, 2)
+
+    def forward(self, xy_last, dxdy_last, state_tuple, seq_start_end):
+        """Forward function of the decoder.
+
+        Args:
+            xy_last (tensor): Last positions of shape (batch, 2). # Important: Only last.
+            dxdy_last (tensor): Last displacements of shape (batch, 2).
+            state_tuple (tensor): Hidden state of Generator (hh, ch). Each tensor of shape (num_layers, batch, h_dim).
+            seq_start_end: A list of tuples which delimit sequences within batch.
+
         Returns:
-            spatial_embedding_seq: xy coordinates embedded in multi dims
-            out: all the past hidden states
-            hidden: only the last hidden state as output with shape seq_len, batch_size, hidden_size
-            encoded_seq: the social property of agent encoded in 64 dim vector (not seq anymore)
+            tensor: tensor of shape (self.out_len, batch, 2).
         """
-        spatial_embedding_seq = self.mlp_spatial(input_seq)
-        out, hidden = self.lstm(spatial_embedding_seq)
-        encoded_seq = hidden[0]
-        out = self.sort(encoded_seq, distances[train_len])
-        return out
+        batch = xy_last.size(0)
+        dxdy_pred = []
+        decoder_input = self.embedding(dxdy_last)
+        decoder_input = decoder_input.view(1, batch, self.embedding_dim)
+
+        for _ in range(self.out_len):
+            # Important: Predict next displacements, given state tuple and embedded displacements.
+
+            output, state_tuple = self.decoder(decoder_input, state_tuple)
+            dxdy_next = self.hidden2pos(output.view(-1, self.h_dim))
+            curr_pos = dxdy_next + xy_last
+            decoder_input = self.embedding(dxdy_next)
+            decoder_input = decoder_input.view(1, batch, self.embedding_dim)
+            dxdy_pred.append(dxdy_next.view(batch, -1))
+            xy_last = curr_pos
+
+        dxdy_pred = torch.stack(dxdy_pred, dim=0)
+        return dxdy_pred, state_tuple[0]
 
 
-class PhysicalEncoder(nn.Module):
+class ToyGenerator(nn.Module):
+    """ Generator, combining decoder, encoder and pooling.
+    Args:
+        in_len (int):
+        out_len (int):
+        embedding_dim (int):
+        encoder_h_dim (int):
+        decoder_h_dim (int):
+        mlp_dim (int):
+        num_layers (int):
+        noise_dim (tuple):
+        noise_type (str):
+        noise_mix_type (str): Either 'ped' or 'global'. If 'global', noise is replicated along ped dimension. If 'ped',
+            all get independent noise.
+        dropout (float):
+        activation (str):
+        batch_norm (bool):
+    """
 
-    def __init__(self, cnn_type='vgg'):
-        '''
-        Args:
-            cnn_type: a string that tells which pretrained model to use 'resnet' or 'vgg'
-        '''
-        super(PhysicalEncoder, self).__init__()
+    def __init__(self, in_len, out_len, embedding_dim=64, encoder_h_dim=64, z_dim=8,
+                 num_layers=1, noise_type='gaussian', noise_mix_type='ped', dropout=0.0, **kwargs):
 
-        if cnn_type == 'resnet':
-            self.cnn = ResNetFeatures()
-            # self.cnn = models.resnet18(pretrained=True)
-        elif cnn_type == 'vgg':
-            self.cnn = VGGFeatures()
-            # self.cnn = models.vgg16(pretrained = True)
-        else:
-            print("Pretrained model not known")
-
-        # modules = list(self.cnn.children())[:-1]
-        # self.cnn = nn.Sequential(*modules)
-        for p in self.cnn.parameters():
-            p.requires_grad = False
-
-    def forward(self, input_scene):
-        """
-        Args:
-            Input_scene: input scene at time t or static image ?
-        Returns:
-            embedded_scene: raw CNN output
-        """
-        return self.cnn(input_scene)
-
-
-#         if len(input_scene)==3:
-#             input_scene = input_scene.unsqueeze(0)
-#         embedded_scene = self.cnn(input_scene)
-#         return embedded_scene #self.vgg.features(img)
-
-class ResNetFeatures(nn.Module):
-
-    def __init__(self):
-        super(ResNetFeatures, self).__init__()
-        self.resnet = models.resnet18(pretrained=True)
-
-    def forward(self, img):
-        if len(img.shape) == 3:
-            img = img.unsqueeze(0)
-        img = self.resnet.conv1(img)
-        img = self.resnet.bn1(img)
-        img = self.resnet.relu(img)
-        img = self.resnet.maxpool(img)
-        img = self.resnet.layer1(img)
-        img = self.resnet.layer2(img)
-        img = self.resnet.layer3(img)
-        img = self.resnet.layer4(img)
-        return img
-
-
-class VGGFeatures(nn.Module):
-
-    def __init__(self):
-        super(VGGFeatures, self).__init__()
-        self.vgg = models.vgg16(pretrained=True)
-
-    def forward(self, img):
-        if len(img.shape) == 3:
-            img = img.unsqueeze(0)
-        return self.vgg.features(img)
-
-    # Attention Module ---------------------------------------------------------------------------
-
-
-class Attention(nn.Module):
-
-    def __init__(self, ):
         super().__init__()
 
-        self.social = SocialAttention()
-        self.physical = PhysicalAttention()
-
-    def forward(self, sorted_seq, resnet_feats, hidden_dec):
-        soc_attn = self.social(sorted_seq, hidden_dec)
-        phy_attn = self.physical(resnet_feats, hidden_dec)
-
-        noise = torch.randn(32, 1, 16)
-        input_dec = torch.cat((phy_attn, soc_attn, noise), dim=2)
-
-        return input_dec
-
-
-class SocialAttention(nn.Module):
-
-    def __init__(self, social_feats_dim=16, decoder_h_dim=32, mlp_dims=[64, 128, 64, 1], num_max_agents=32):
-        """
-        Args:
-            social_feats_dim: dimension of embedded and sorted social features of input
-            decoder_h_dim: dimensions of the hidden state of the decoder
-            mlp_dims: dimensions of layers of mlp for embedding social features and hiden states of decoder
-            num_max_agents: maximum possible number of agents in a scene
-            
-        TODO: figure out how num_max_agents are related to this function (set zero non agents)
-        """
-        super(SocialAttention, self).__init__()
-
-        self.social_feats_dim = social_feats_dim
-        self.decoder_h_dim = decoder_h_dim
-        self.mlp_dims = mlp_dims
-        self.num_max_agents = num_max_agents
-
-        self.input_dim = self.decoder_h_dim + self.social_feats_dim
-        self.num_layers = len(self.mlp_dims)
-
-        # Attention
-        self.layer1 = nn.Sequential(nn.Linear(self.input_dim, mlp_dims[0]), nn.ReLU())
-        self.layer2 = nn.Sequential(nn.Linear(mlp_dims[0], mlp_dims[1]), nn.ReLU())
-        self.layer3 = nn.Sequential(nn.Linear(mlp_dims[1], mlp_dims[2]), nn.ReLU())
-        self.layer4 = nn.Sequential(nn.Linear(mlp_dims[2], mlp_dims[3]), nn.Softmax(dim=1))
-
-    def forward(self, sorted_seq, hidden):  # h_states, social_features):
-        """
-        Args:
-            h_states: hidden states of the decoder LSTM in GAN for agents
-            social_features: output of encoder, joint social feature vector
-        Returns:
-            x : the social context. highlights which agents are most important.
-        """
-        input_soc_attn = torch.cat((sorted_seq, hidden.repeat(32, 1, 1)), dim=2)
-        social_weights = self.layer1(input_soc_attn)
-        social_weights = self.layer2(social_weights)
-        social_weights = self.layer3(social_weights)
-        social_weights = self.layer4(social_weights)
-        weighted_feats = torch.mul(sorted_seq, social_weights.repeat(1, 1, 16))
-        return weighted_feats.view(32, -1).unsqueeze(1)
-
-
-class PhysicalAttention(nn.Module):
-
-    def __init__(self, in_channels=512, feat_dim=[15, 20], embedding_dim=16, decoder_h_dim=32):
-        """
-        Args:
-            in_channels: number of channels of the raw CNN output images
-            feat_dim: image dimensions of the CNN output images
-            embedding_dim: expected output dimension of the fully connected embedding layer  
-            decoder_h_dim: hidden state dimension of the decoder
-        """
-        super(PhysicalAttention, self).__init__()
-
-        self.in_channels = in_channels
-        self.feat_dim = feat_dim
+        self.in_len = in_len
+        self.out_len = out_len
         self.embedding_dim = embedding_dim
+        self.encoder_h_dim = encoder_h_dim
+        self.z_dim = z_dim
+        decoder_h_dim = encoder_h_dim + z_dim
         self.decoder_h_dim = decoder_h_dim
-        self.attention_dim = embedding_dim + decoder_h_dim  # !!!!
+        self.noise_dim = (z_dim,)
+        self.num_layers = num_layers
+        self.noise_type = noise_type
+        self.noise_mix_type = noise_mix_type
 
-        if len(feat_dim) != 2:
-            self.feat_dim = [feat_dim[0], feat_dim[0]]
+        self.encoder = Encoder(embedding_dim=embedding_dim,
+                               h_dim=encoder_h_dim,
+                               num_layers=num_layers,
+                               dropout=dropout)
 
-        # Embedding
-        self.conv = nn.Sequential(nn.Conv2d(512, 1, 3), nn.ReLU())  # !!!!!
-        self.embedding_mlp = nn.Sequential(nn.Linear((feat_dim[0] - 2) * (feat_dim[1] - 2), embedding_dim),
-                                           nn.Softmax(dim=1))
+        self.decoder = ToyDecoder(out_len,
+                                  embedding_dim=embedding_dim,
+                                  h_dim=decoder_h_dim,
+                                  num_layers=num_layers,
+                                  dropout=dropout, )
 
-        # Attention Module
-        self.attention_mlp = nn.Sequential(nn.Linear(self.attention_dim, embedding_dim), nn.Tanh(), nn.Softmax(dim=1))
+    def forward(self, xy_in, dxdy_in, seq_start_end, user_noise=None):
+        """Forward function of TrajectoryGenerator.
 
-    def forward(self, phy_features, hidden):
-        """
         Args:
-          h_states: hidden states of the decoder LSTM in GAN for agents
-          physical_features: raw output of VGG or ResNet
-          
+            xy_in: Tensor of shape (in_len, batch, 2).
+            dxdy_in: Tensor of shape (in_len, batch, 2).
+            seq_start_end: A list of tuples which delimit sequences within batch.
+            user_noise: Generally used for inference when you want to see
+                relation between different types of noise and outputs.
+
         Returns:
-            x: the physical context. feasible paths. attention weights?
-            
-        TODO: VGG or ResNet dimensions, what do we do with the attention weights ?
+            Tensor of shape (self.out_len, batch, 2)
         """
+        batch = dxdy_in.size(1)
+        # Encode seq
+        encoded = self.encoder(dxdy_in).view(-1, self.encoder_h_dim)
 
-        phy_embedding = self.conv(phy_features)
-        phy_embedding = self.embedding_mlp(phy_embedding.view(1, -1))
+        # Add noise
+        decoder_h = self.add_noise(encoded, seq_start_end, user_noise=user_noise)
+        decoder_h = torch.unsqueeze(decoder_h, 0)
+        decoder_c = torch.zeros(self.num_layers, batch, self.decoder_h_dim).type(dtype)
+        state_tuple = (decoder_h, decoder_c)
 
-        attention_input = torch.cat((phy_embedding.unsqueeze(0).repeat(32, 1, 1),
-                                     hidden.view(32, 1, 32)), dim=2)
+        xy_last = xy_in[-1]
+        dxdy_last = dxdy_in[-1]
+        # Predict Trajectory
+        decoder_out = self.decoder(xy_last, dxdy_last, state_tuple, seq_start_end)
+        dxdy_pred, _ = decoder_out
 
-        phy_weights = self.attention_mlp(attention_input)
+        return dxdy_pred
 
-        weighted_feats = torch.mul(phy_embedding.unsqueeze(0).repeat(32, 1, 1), phy_weights)
+    def add_noise(self, encoded, seq_start_end, user_noise=None):
+        """Concatenates the input vector with a noise vector.
 
-        return weighted_feats
-
-
-# GAN Modules ------------------------------------------------------------------------------------
-
-
-class DecoderGAN(nn.Module):  # also called "Generator" # IMPORTANT: Unfortunately not.
-
-    def __init__(self, input_dim=128, embedding_dim=16, hidden_dim=32, output_dim=2):
-        super(DecoderGAN, self).__init__()
-
-        self.input_dim = input_dim
-        self.embedding_dim = embedding_dim
-        self.hidden_dim = hidden_dim
-
-        self.mlp_embedding = nn.Sequential(nn.Linear(input_dim, embedding_dim), nn.ReLU())
-        self.lstm = nn.Sequential(nn.LSTM(embedding_dim, hidden_dim, num_layers=1))
-        self.mlp_output = nn.Sequential(nn.Linear(hidden_dim, output_dim), nn.ReLU())
-
-    def init_hidden(self):
-        return torch.zeros(1, 32, 32)
-
-    def forward(self, input_features):  # weighted_physical, weighted_social, noise):
-        # input_features = torch.cat(weighted_physical, weighted_social, noise)
-
-        x = self.mlp_embedding(input_features)
-        _, x = self.lstm(x.view(1, 32, -1))  # !!!
-        hidden_states = x[0]
-        xy_estimated = self.mlp_output(hidden_states)
-
-        return hidden_states, xy_estimated
-
-
-class Discriminator(nn.Module):
-
-    def __init__(self, input_dim=2, mlp_dim=16, hidden_dim=64, num_layers=1):
-        """
         Args:
-            input_dim: number of input features (two features: x and y coordinates)
-            mlp_dim: spatial embedding dimension of xy coordinates to high dim
-            hidden_dim: number of dimensions of the hidden state and therefore the output of LSTM
-            num_layers: number of different LSTMs (different Weight sets for each LSTM)
-        """
-        super(Discriminator, self).__init__()
+            encoded: Tensor of shape (_, decoder_h_dim - noise_first_dim).
+            seq_start_end: A list of tuples which delimit sequences within batch.
+            user_noise: Generally used for inference when you want to see
+                relation between different types of noise and outputs.
 
-        self.input_dim = input_dim
+        Returns:
+            Tensor of shape (_, decoder_h_dim)
+        """
+        if not self.z_dim:
+            return encoded
+
+        if self.noise_mix_type == 'global':
+            noise_shape = (seq_start_end.size(0),) + self.noise_dim
+        else:
+            noise_shape = (encoded.size(0),) + self.noise_dim
+
+        if user_noise is not None:
+            z_decoder = user_noise
+        else:
+            z_decoder = get_noise(noise_shape, self.noise_type)
+
+        if self.noise_mix_type == 'global':
+            _list = []
+            for idx, (start, end) in enumerate(seq_start_end):
+                start = start.item()
+                end = end.item()
+                _vec = z_decoder[idx].view(1, -1)
+                _to_cat = _vec.repeat(end - start, 1)
+                _list.append(torch.cat([encoded[start:end], _to_cat], dim=1))
+            decoder_h = torch.cat(_list, dim=0)
+            return decoder_h
+
+        decoder_h = torch.cat([encoded, z_decoder.type(dtype)], dim=1)
+
+        return decoder_h
+
+
+class ToyDiscriminator(nn.Module):
+    """
+
+    Args:
+        embedding_dim:
+        h_dim:
+        mlp_dim:
+        num_layers:
+        activation:
+        batch_norm:
+        dropout:
+        d_type:
+    """
+
+    def __init__(self, embedding_dim=64, h_dim=64, mlp_dim=1024, num_layers=1,
+                 activation='relu', batch_norm=True, dropout=0.0):
+        super(ToyDiscriminator, self).__init__()
+
         self.mlp_dim = mlp_dim
-        self.hidden_dim = hidden_dim
+        self.h_dim = h_dim
+
+        self.encoder = Encoder(embedding_dim=embedding_dim,
+                               h_dim=h_dim,
+                               num_layers=num_layers,
+                               dropout=dropout)
+
+        real_classifier_dims = [h_dim, mlp_dim, 1]
+        self.real_classifier = make_mlp(real_classifier_dims,
+                                        activation=activation,
+                                        batch_norm=batch_norm,
+                                        dropout=dropout)
+
+    def forward(self, xy, seq_start_end=None):
+        """
+        Args:
+            xy: Tensor of shape (in_len + out_len, batch, 2).
+            seq_start_end: A list of tuples which delimit sequences within batch.
+
+        Returns:
+            Tensor of shape (batch,) with real/fake scores.
+        """
+        hidden = self.encoder(xy)
+        classifier_input = hidden.squeeze()
+        scores = self.real_classifier(classifier_input)
+        return scores
+
+
+class BicycleEncoder(nn.Module):
+    """BicycleEncoder.
+
+        Args:
+            embedding_dim (int): Output dim of embedding (2 -> embedding_dim, via Linear layer).
+            h_dim (int): Hidden dim of the LSTM (embedding_dim -> h_dim).
+            z_dim (int): Dimension of noise input.
+            num_layers (int): Number of stacked lstms.
+            dropout (float): Specifies dropout in the lstm layer.
+
+        Attributes:
+            embedding_dim (int): Output dim of linear layer: 2 -> embedding_dim.
+            h_dim (int): Hidden dim of the LSTM: embedding_dim -> h_dim.
+            num_layers (int): Number of stacked lstms.
+            embedding (nn.Linear): Embeds x and y coordinates into embedding_dim dimensions.
+            encoder (nn.LSTM): Encodes trajectory information.
+            fc (nn.Linear): Projects encoding to mean estimates.
+            fclogvar (nn.Linear): Projects encoding to logvar=2*logstd estimates.
+
+    """
+
+    def __init__(self, embedding_dim=64, h_dim=64, z_dim=8, num_layers=1, dropout=0.0):
+        super(BicycleEncoder, self).__init__()
+
+        self.h_dim = h_dim
+        self.embedding_dim = embedding_dim
         self.num_layers = num_layers
 
-        self.mlp_spatial_lstm = nn.Sequential(nn.Linear(input_dim, mlp_dim),
-                                              nn.ReLU(),
-                                              nn.LSTM(mlp_dim, hidden_dim, num_layers))
-        self.mlp_bool = nn.Linear(hidden_dim, 1)
+        self.embedding = nn.Linear(2, embedding_dim)
+        self.encoder = nn.LSTM(embedding_dim, h_dim, num_layers, dropout=dropout)
+        self.fc = nn.Linear(h_dim * num_layers, z_dim)
+        self.fclogvar = nn.Linear(h_dim * num_layers, z_dim)
 
-    def forward(self, input_seq):
-        """
-        Args:
-            input_seq: should be compatible with shape seq_len x batch_dim x input_dim
+    def init_hidden(self, batch):
+        return (torch.zeros(self.num_layers, batch, self.h_dim).type(dtype),
+                torch.zeros(self.num_layers, batch, self.h_dim).type(dtype))
 
-        Returns:
-            spatial_embedding_seq: xy coordinates embedded in multi dims
-            out: all the past hidden states
-            hidden: only the last hidden state as output with shape seq_len, batch_size, hidden_size
-            encoded_seq: the social property of agent encoded in 64 dim vector (not seq anymore)
+    def _forward(self, xy_in):
+        """ Forward function of the Trajectory Encoder.
+
+            Args:
+                xy_in (tensor): Tensor of shape (in_len, batch_size, 2).
+
+            Returns:
+                tensor: Tensor of shape (self.num_layers, batch, self.h_dim).
+
+            Note: The batchsize does not need to be static.
         """
-        _, (hidden, _) = self.mlp_spatial_lstm(input_seq)
-        return self.mlp_bool(hidden.squeeze())
+        # Encode observed Trajectory
+        batch = xy_in.size(1)
+        xy_in_embedding = self.embedding(xy_in.contiguous().view(-1, 2))
+        xy_in_embedding = xy_in_embedding.view(-1, batch, self.embedding_dim)
+        state_tuple = self.init_hidden(batch)
+        output, state = self.encoder(xy_in_embedding, state_tuple)
+        hidden = state[0].view(-1, self.h_dim)
+        return self.fc(hidden), self.fclogvar(hidden)
+
+    def forward(self, xy_in):
+        mu, logvar = self._forward(xy_in)
+        std = logvar.mul(0.5).exp_()
+        eps = get_z_random(std.size(0), std.size(1))
+        z = eps.mul(std).add_(mu)
+        return z, mu, logvar
+
+
+class BicycleGenerator(nn.Module):
+
+    def __init__(self, generator, start_mode, embedding_dim=64, h_dim=64, z_dim=8, num_layers=1, dropout=0.0,
+                 in_len=8, out_len=12, noise_type='gaussian', noise_mix_type='ped', **kwargs):
+        super().__init__()
+        noise_dim = (z_dim,) # required for sgan
+        decoder_h_dim = h_dim + z_dim
+        self.start_mode = start_mode
+
+        if generator == ToyGenerator:
+            self.generator = generator(in_len=in_len,
+                                       out_len=out_len,
+                                       embedding_dim=embedding_dim,
+                                       encoder_h_dim=h_dim,
+                                       z_dim=z_dim,
+                                       num_layers=num_layers,
+                                       noise_type=noise_type,
+                                       noise_mix_type=noise_mix_type,
+                                       dropout=dropout,
+                                       noise_dim=noise_dim,
+                                       decoder_h_dim=decoder_h_dim,
+                                       **kwargs)
+        elif isinstance(generator, TrajectoryGenerator):
+            self.generator = generator
+        else:
+            raise AssertionError("BicycleGenerator: no compatible generator instance given for initialization.")
+
+        self.encoder = BicycleEncoder(embedding_dim=embedding_dim,
+                                      h_dim=h_dim,
+                                      z_dim=z_dim,
+                                      num_layers=num_layers,
+                                      dropout=dropout)
+        self.mode = start_mode
+        self.z_dim = z_dim
+        self.z_random = None
+        self.mu = None
+        self.logvar = None
+
+    def forward(self, xy_in, dxdy_in, seq_start_end, xy_out=None, user_noise=None):
+        if self.mode == 'clr':
+            return self.clr_forward(xy_in, dxdy_in, seq_start_end)
+        elif self.mode == 'cvae':
+            return self.cvae_forward(xy_in, dxdy_in, seq_start_end, xy_out)
+        elif self.mode == 'eval':
+            return self.generator(xy_in, dxdy_in, seq_start_end, user_noise=user_noise)
+        else:
+            raise AssertionError(f"self.type={self.mode} is invalid. Must be either 'clr', 'cvae' or 'eval'.")
+
+    def clr_forward(self, xy_in, dxdy_in, seq_start_end):
+        # With seq_start_end.size(0) instead of xy_in.size(1), along with global option in add_noise, noise would be
+        # same for all agents within one sequence. Try if network doesnt train.
+        self.z_random = get_z_random(xy_in.size(1), self.z_dim)
+        dxdy_pred = self.generator(xy_in, dxdy_in, seq_start_end, user_noise=self.z_random)
+        xy_pred = relative_to_abs(dxdy_pred, xy_in[-1])
+        _, self.mu, self.logvar = self.encoder(xy_pred)  # mu~z_est
+        return dxdy_pred
+
+    def cvae_forward(self, xy_in, dxdy_in, seq_start_end, xy_out):
+        z_encoded, self.mu, self.logvar = self.encoder(xy_out)
+        dxdy_pred = self.generator(xy_in, dxdy_in, seq_start_end, user_noise=z_encoded)
+        return dxdy_pred
+
+    def eval(self):
+        self.mode = 'eval'
+        return self.train(False)
+
+    def train(self, mode=True):
+        if mode:
+            self.mode=self.start_mode
+        self.training = mode
+        for module in self.children():
+            module.train(mode)
+        return self
+
+    def clr(self):
+        self.mode = 'clr'
+        return self
+
+    def cvae(self):
+        self.mode = 'cvae'
+        return self

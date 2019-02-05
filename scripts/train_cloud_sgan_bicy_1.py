@@ -2,7 +2,7 @@ import torch
 from mapsgan import BicycleSolver, BicycleGenerator, ToyGenerator, ToyDiscriminator, data_loader
 import mapsgan.experiments as experiments
 import time
-from sgan import TrajectoryGenerator, TrajectoryDiscriminator
+from mapsgan.sgan import TrajectoryGenerator, TrajectoryDiscriminator
 
 mode = 'cvae'
 fileprefix = '/cloud/sgan_bicy_1'

@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from torch import nn
 from mapsgan import SGANSolver, data_loader
-from sgan import TrajectoryGenerator, TrajectoryDiscriminator
+from mapsgan.sgan import TrajectoryGenerator, TrajectoryDiscriminator
 import mapsgan.experiments as experiments
 import time
 
