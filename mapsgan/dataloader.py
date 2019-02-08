@@ -321,6 +321,7 @@ def seq_collate(data):
 
 
 def data_loader(in_len, out_len, batch_size, num_workers, path, shuffle=True):
+    """Adapted from SGAN"""
     dset = TrajectoryDataset(path,
                              obs_len=in_len,
                              pred_len=out_len)
