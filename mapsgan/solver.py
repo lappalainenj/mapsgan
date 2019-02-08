@@ -2,7 +2,6 @@ import random
 import torch
 from torch import nn
 import numpy as np
-import time
 import os
 from pathlib import Path
 from mapsgan.utils import get_dtypes, relative_to_abs, init_weights, get_z_random, get_cosine_score, cos_scene, get_average_fde, get_collisions
@@ -82,7 +81,10 @@ class BaseSolver:
         else:
             checkpoint = torch.load(model_path)
         self.generator.load_state_dict(checkpoint['g_state'])
-        self.train_loss_history = checkpoint['train_loss_history']
+        try:
+            self.train_loss_history = checkpoint['train_loss_history']
+        except:
+            pass
 
     def load_checkpoint(self, model_path, init_optim=False):
         #print('Restoring from checkpoint')
@@ -778,12 +780,13 @@ class cVAESolver(Solver):
 
 
 class BicycleSolver(BaseSolver):
+    """BicycleSolver alternates between cLR and cVAE steps when used for training."""
 
     def __init__(self, generator, discriminator, optim=torch.optim.Adam, encoder_optim=torch.optim.SGD, optims_args=None,
                  loss_fns=None, loss_weights=None, init_params=False, two_discr=False):
         super().__init__(generator, discriminator, optim, optims_args, loss_fns, loss_weights, init_params)
 
-        if two_discr:
+        if two_discr: # optionally seperate discriminators as described in multimodal paper
             import copy
             discriminator2 = copy.deepcopy(discriminator)
         else:

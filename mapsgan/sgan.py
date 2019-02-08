@@ -1,3 +1,4 @@
+"""Adapted from SGAN"""
 import torch
 import torch.nn as nn
 from mapsgan.utils import get_dtypes

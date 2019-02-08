@@ -8,7 +8,7 @@ root_path = Path(os.path.realpath(__file__)).parent.parent.parent
 
 
 class Experiment:
-
+    """The experiment objects store mainly paths to train and testfiles as well as homography matrices"""
     def __init__(self):
         super(Experiment, self).__init__()
         self.data_path = ''

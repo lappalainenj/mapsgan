@@ -354,7 +354,7 @@ class BicycleEncoder(nn.Module):
 
 
 class BicycleGenerator(nn.Module):
-
+    """Combines a generator generically with an encoder network for bicycle training."""
     def __init__(self, generator, start_mode, embedding_dim=64, h_dim=64, z_dim=8, num_layers=1, dropout=0.0,
                  in_len=8, out_len=12, noise_type='gaussian', noise_mix_type='ped', **kwargs):
         super().__init__()
@@ -392,6 +392,7 @@ class BicycleGenerator(nn.Module):
         self.logvar = None
 
     def forward(self, xy_in, dxdy_in, seq_start_end, xy_out=None, user_noise=None):
+        """Forward function in bicycle training switches depending on mode."""
         if self.mode == 'clr':
             return self.clr_forward(xy_in, dxdy_in, seq_start_end)
         elif self.mode == 'cvae':
@@ -402,6 +403,7 @@ class BicycleGenerator(nn.Module):
             raise AssertionError(f"self.type={self.mode} is invalid. Must be either 'clr', 'cvae' or 'eval'.")
 
     def clr_forward(self, xy_in, dxdy_in, seq_start_end):
+        """CLR forward function."""
         # With seq_start_end.size(0) instead of xy_in.size(1), along with global option in add_noise, noise would be
         # same for all agents within one sequence. Try if network doesnt train.
         self.z_random = get_z_random(xy_in.size(1), self.z_dim)
@@ -411,6 +413,7 @@ class BicycleGenerator(nn.Module):
         return dxdy_pred
 
     def cvae_forward(self, xy_in, dxdy_in, seq_start_end, xy_out):
+        """CVAE forward function."""
         z_encoded, self.mu, self.logvar = self.encoder(xy_out)
         dxdy_pred = self.generator(xy_in, dxdy_in, seq_start_end, user_noise=z_encoded)
         return dxdy_pred

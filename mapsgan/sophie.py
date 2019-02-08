@@ -1,11 +1,4 @@
-"""
-Architechtural modules of social physical attentive multimodal conditional generative adversarial network for tajectory prediction
-
-authors: Janne Lappalainen (email)
-         Yagmur Yener (yagmur.yener@tum.de)
-
-TODO: Attention must be added into the Decoder from sgan, instead of pool_net (line 199).
-"""
+"""Deprecated"""
 
 import torch
 import torch.nn as nn
