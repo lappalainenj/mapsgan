@@ -98,8 +98,8 @@ class BaseSolver:
             self.init_optimizers()
             self.optimizer_g.load_state_dict(checkpoint['g_optim_state'])
             self.optimizer_d.load_state_dict(checkpoint['d_optim_state'])
-        if self.encoder_optim:
-            self.optimizer_e.load_state_dict(checkpoint['e_optim_state'])
+        #if self.encoder_optim:
+        #    self.optimizer_e.load_state_dict(checkpoint['e_optim_state'])
         self.train_loss_history = checkpoint['train_loss_history']
         total_epochs = checkpoint['epochs']
         return total_epochs
@@ -273,7 +273,6 @@ class BaseSolver:
 
 
     def interpolate(self, loader, scene=25, stepsize=0.2, seed=20, z_dim=8, load_checkpoint_from=None):
-        torch.manual_seed(seed)
         if load_checkpoint_from is not None and os.path.isfile(load_checkpoint_from):
             print('Loading from checkpoint')
             if not cuda:
@@ -284,6 +283,7 @@ class BaseSolver:
 
         if cuda:
             self.generator.cuda()
+        torch.manual_seed(seed)
 
         self.generator.eval()
         out = {'xy_in': [], 'xy_out': [], 'xy_pred': []}
@@ -312,6 +312,32 @@ class BaseSolver:
                 out['xy_out'].append(xy_out[:, start:end].cpu().numpy())
                 out['xy_pred'].append(xy_pred[:, start:end].cpu().detach().numpy())
         return out
+
+    def sample_distribution(self, loader, scene = 65, seed=20, num_samples=5, z_dim=8):
+        if cuda:
+            self.generator.cuda()
+        self.generator.eval()
+        batch = list(iter(loader))[scene]
+        if cuda:
+            batch = {key: tensor.cuda() for key, tensor in batch.items()}
+        xy_in = batch['xy_in']
+        xy_out = batch['xy_out']
+        dxdy_in = batch['dxdy_in']
+        seq_start_end = batch['seq_start_end']
+        torch.manual_seed(seed)
+        out = {'xy_in': [], 'xy_out': [], 'xy_pred': []}
+        for n in range(num_samples):
+            z = get_z_random(xy_in.size(1), z_dim)
+            if cuda: z = z.cuda().double()
+            dxdy_pred = self.generator(xy_in, dxdy_in, seq_start_end, user_noise=z)
+            xy_pred = relative_to_abs(dxdy_pred, xy_in[-1])
+            for seq in seq_start_end:
+                start, end = seq
+                out['xy_in'].append(xy_in[:, start:end].cpu().numpy())
+                out['xy_out'].append(xy_out[:, start:end].cpu().numpy())
+                out['xy_pred'].append(xy_pred[:, start:end].cpu().detach().numpy())
+        return out
+
 
     def _checkpoint(self, losses_g, losses_d):
         """Checkpoint during training.

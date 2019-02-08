@@ -8,13 +8,13 @@ cuda = torch.cuda.is_available()
 ml = 'cpu' if not cuda else None
 
 ### Saved SGAN Models
-model_path = '../../sgan/sgan/models/sgan-p-models/'
+model_path = '../sgan/sgan/models/sgan-p-models/'
 model = 'eth_12_model.pt'
 ###
 checkpoint = torch.load(model_path + model, map_location=ml)
 
 mode = 'cvae'
-fileprefix = '/cloud/sgan_bicy_1'
+fileprefix = '/cloud/sgan_bicy_2'
 lr_gen = 1e-3
 lr_dis = 1e-3
 lr_enc = 1e-3
